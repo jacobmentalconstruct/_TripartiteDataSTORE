@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tripartite"
+version = "0.1.0"
+description = "Ingest files into a portable Tripartite knowledge store (verbatim + semantic + graph)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    # llama.cpp Python bindings — provides both embedding and text generation
+    # Install with: pip install llama-cpp-python
+    # For GPU acceleration: CMAKE_ARGS="-DLLAMA_CUDA=on" pip install llama-cpp-python
+    "llama-cpp-python>=0.2.90",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+]
+
+[project.scripts]
+tripartite-ingest = "tripartite.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tripartite*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"

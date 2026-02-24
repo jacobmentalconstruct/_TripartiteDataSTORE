@@ -1,0 +1,95 @@
+# ============================================================
+# _theCELL / _UsefulHelperSCRIPTS - Python + Tkinter
+# ============================================================
+
+# --- Python bytecode / caches ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Virtual environments (keep crawlers out) ---
+.venv/
+venv/
+ENV/
+env/
+.conda/
+.condarc
+pip-wheel-metadata/
+
+# --- Packaging / build artifacts ---
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-log.txt
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.code-workspace
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Logs / temp ---
+*.log
+*.tmp
+*.temp
+*.swp
+*~
+.cache/
+_logs
+
+# --- App persistence / generated data ---
+_db/
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sqlite-journal
+*.wal
+*.shm
+
+# --- JSONL / session artifacts (generated) ---
+*.jsonl
+memory_archive_*.jsonl
+working_memory*.jsonl
+session_*.jsonl
+
+# --- Common local config/secrets (don’t commit) ---
+.env
+.env.*
+*.env
+secrets.json
+config.local.json
+app_config.json
+app_config.json.tmp
+
+# --- Vector / RAG stores (often large + machine-local) ---
+knowledge_base/
+chroma/
+chromadb/
+vector_store/
+vectors/
+*.faiss
+*.index
+
+# --- Jupyter / notebooks (if any) ---
+.ipynb_checkpoints/
+
+# --- Optional: if you ever dump reports/maps locally ---
+*_project_map.txt
+*_filedump.txt
+*_folder_tree.txt
+reports/
+output/
