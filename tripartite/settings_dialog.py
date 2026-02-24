@@ -6,6 +6,7 @@ Settings Toplevel window.
 Sections:
   • Embedder model   — dropdown of all KNOWN_MODELS where role=='embedder'
   • Extractor model  — dropdown of all KNOWN_MODELS where role=='extractor'
+  • Diagnostics      — lazy mode toggle
 
 Each model row shows:
   • Display name + description
@@ -101,7 +102,7 @@ class SettingsDialog(tk.Toplevel):
 
         # Centre over parent
         self.update_idletasks()
-        w, h = 620, 560
+        w, h = 620, 600  # Increased height to accommodate Diagnostics section
         px = parent.winfo_rootx() + (parent.winfo_width()  - w) // 2
         py = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
         self.geometry(f"{w}x{h}+{px}+{py}")
@@ -137,6 +138,32 @@ class SettingsDialog(tk.Toplevel):
             subtitle="Used for entity and relationship extraction (graph layer).",
             attr="extractor_filename",
         )
+
+        tk.Frame(body, bg=BG2, height=1).pack(fill="x", pady=10)
+
+        # ── Diagnostics section ───────────────────────────────────────────────
+        diag_section = tk.Frame(body, bg=BG)
+        diag_section.pack(fill="x", pady=(0, 4))
+
+        tk.Label(diag_section, text="Diagnostics", bg=BG, fg=FG,
+                 font=("Segoe UI Semibold", 10)).pack(anchor="w")
+        tk.Label(diag_section, text="Testing and development options.", bg=BG, fg=FG_DIM,
+                 font=FONT_SM).pack(anchor="w", pady=(0, 6))
+
+        self.lazy_var = tk.BooleanVar(value=self._settings.lazy_mode)
+        tk.Checkbutton(
+            diag_section,
+            text="Lazy mode  (structural pass only — skips embedding and entity extraction)",
+            variable=self.lazy_var,
+            bg=BG, fg=FG, selectcolor=BG2,
+            activebackground=BG, activeforeground=FG,
+            font=FONT_UI
+        ).pack(anchor="w")
+
+        tk.Label(diag_section,
+                 text="Useful for testing the chunking pipeline without loading models.",
+                 bg=BG, fg=FG_DIM, font=FONT_SM, wraplength=560, justify="left"
+                 ).pack(anchor="w", pady=(2, 0))
 
         tk.Frame(body, bg=BG2, height=1).pack(fill="x", pady=10)
 
@@ -348,5 +375,7 @@ class SettingsDialog(tk.Toplevel):
     # ── Save ──────────────────────────────────────────────────────────────────
 
     def _save_and_close(self):
+        # Save lazy_mode state to settings
+        self._settings.lazy_mode = self.lazy_var.get()
         self._settings.save()
         self.destroy()

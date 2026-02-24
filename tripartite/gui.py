@@ -7,7 +7,7 @@ Run with:
 Presents a simple window with:
   • Folder / file picker
   • Output .db path (auto-filled, editable)
-  • Lazy mode + chunk stream checkboxes
+  • Chunk stream checkbox
   • ⚙ Settings button (model selection, download)
   • Run / Stop / Exit buttons
   • Live scrolling log of ingest progress
@@ -144,14 +144,6 @@ class TripartiteApp(tk.Tk):
         # ── Options ───────────────────────────────────────────────────────────
         opt_frame = tk.Frame(self, bg=BG)
         opt_frame.pack(fill="x", padx=18, pady=4)
-
-        self.lazy_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(opt_frame,
-                       text="Lazy mode  (structural pass only — no embedding or entity extraction)",
-                       variable=self.lazy_var,
-                       bg=BG, fg=FG, selectcolor=BG2,
-                       activebackground=BG, activeforeground=FG,
-                       font=FONT_UI).pack(side="left")
 
         self.show_chunks_var = tk.BooleanVar(value=False)
         tk.Checkbutton(opt_frame, text="Show chunk stream",
@@ -341,16 +333,16 @@ class TripartiteApp(tk.Tk):
 
         db_path = Path(output_str)
 
-        if db_path.exists() and not self.lazy_var.get():
+        if db_path.exists() and not self._settings.lazy_mode:
             if self._check_model_mismatch(db_path) == "cancel":
                 return
 
-        if not self.lazy_var.get():
+        if not self._settings.lazy_mode:
             if not self._settings.model_is_cached("embedder"):
                 if not self._prompt_download("embedder"):
                     return
 
-        lazy = self.lazy_var.get()
+        lazy = self._settings.lazy_mode
         self._clear_log()
         self._set_running(True)
         self._log(f"Source  : {source}", "accent")
@@ -617,3 +609,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

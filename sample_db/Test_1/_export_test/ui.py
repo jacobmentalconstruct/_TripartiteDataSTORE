@@ -1,0 +1,212 @@
+        self._tabs = []  # list[dict]
+            if tab["id"] == tab_id:
+        self.add_tab(title="Tab 1")
+        content = ttk.Frame(self.content_container, padding=12)
+        add_btn.pack(side="left", padx=(6, 0))
+        return None
+    def _render_tab_strip(self) -> None:
+        content.grid_remove()  # hidden until selected
+            text="Close This Tab",
+        name_var = tk.StringVar(value=tab["title"])
+        closing_tab = None
+        # Destroy content frame
+        text_box = tk.Text(parent, wrap="word", height=16)
+    def select_tab(self, tab_id: str) -> None:
+        dialog = tk.Toplevel(self.root)
+            dialog.destroy()
+        self.root = root
+        if not any(t["id"] == tab_id for t in self._tabs):
+            command=lambda: self.close_tab(tab_id)
+        self.root.minsize(700, 450)
+        self._active_tab_id = tab_id
+            "This sample app is intentionally small and structured for ingestion tests.\n"
+        ttk.Button(btns, text="Save", command=save).pack(side="left", padx=(6, 0))
+                closing_tab = tab
+    # Helpers
+        dialog.title("Rename Tab")
+            btn_text = f" {tab['title']} "
+        active = self._get_tab(tab_id)
+        # A text area gives your ingestor something realistic to parse
+        if self._active_tab_id == tab_id:
+        # Content area
+            controls,
+        entry.grid(row=1, column=0, sticky="ew", pady=(4, 10))
+        self.select_tab(tab_id)
+    - Each tab has a small content panel
+        dialog.transient(self.root)
+        self.top_frame = ttk.Frame(self.root, padding=(8, 8, 8, 4))
+    # Tab management
+                tab_frame,
+        # Fill tab content with sample widgets
+        frame.pack(fill="both", expand=True)
+        if closing_tab is None:
+      - inline new tab button (+)
+        self.root.grid_columnconfigure(0, weight=1)
+                self.status_var.set(f"Renamed tab to {new_name}")
+        self.status_bar = ttk.Label(
+    def _build_tab_content(self, parent: ttk.Frame, title: str, tab_id: str) -> None:
+        if len(self._tabs) == 1:
+        self.add_tab(title="Tab 3")
+        title_label = ttk.Label(parent, text=title, font=("TkDefaultFont", 12, "bold"))
+        self._active_tab_id = None
+        self._build_tab_content(content, tab_title, tab_id)
+            "- a custom tab strip\n"
+        self.style = ttk.Style()
+        self.top_frame.grid(row=0, column=0, sticky="ew")
+        # Tab strip (left side) + utility area (right side if needed later)
+            "You can rename, add, and close tabs to generate state changes."
+                tab["title"] = new_name
+            self.status_var.set(f"Viewing {active['title']}")
+        closing_tab["content"].destroy()
+                return tab
+        controls = ttk.Frame(parent)
+        parent.grid_columnconfigure(0, weight=1)
+    def _show_active_tab(self) -> None:
+        self.content_container.grid_columnconfigure(0, weight=1)
+            tab_btn = ttk.Button(
+        self._render_tab_strip()
+        if active:
+            pass
+    def add_tab(self, title: str | None = None) -> None:
+        self._show_active_tab()
+            text="Add New Tab",
+            return
+def build_ui(root: tk.Tk) -> TabbedUI:
+        ttk.Label(frame, text="New tab name:").grid(row=0, column=0, sticky="w")
+            is_active = (tab["id"] == self._active_tab_id)
+            text="Rename Tab",
+            relief="groove"
+    - Custom tab strip (not ttk.Notebook) so we can place:
+    Simple custom tabbed UI for ingestion/testing.
+            "content": content,
+        self.root.geometry("900x600")
+        ttk.Button(btns, text="Cancel", command=dialog.destroy).pack(side="left")
+    Features:
+        title_label.grid(row=0, column=0, sticky="w")
+        if not tab:
+        self.content_container = ttk.Frame(self.root, padding=(8, 4, 8, 8))
+            self.status_var.set("Cannot close the last tab. Add a new tab first.")
+            text="+",
+        self.status_bar.grid(row=2, column=0, sticky="ew")
+            anchor="w",
+        for child in self.tab_strip.winfo_children():
+            f"This is {title}.\n\n"
+    # ------------------------------------------------------------------
+        tab_title = title or f"Tab {self._tab_counter}"
+      - per-tab close buttons (×)
+            child.destroy()
+            )
+            command=self.add_tab
+        self.root.title("Sample Ingestion UI")
+            "It contains:\n"
+        meta_label.grid(row=1, column=0, sticky="w", pady=(2, 10))
+        parent.grid_rowconfigure(3, weight=1)
+            textvariable=self.status_var,
+            new_name = name_var.get().strip()
+        closing_index = None
+    def _build_layout(self) -> None:
+        frame = ttk.Frame(dialog, padding=12)
+        for i, tab in enumerate(self._tabs):
+        for tab in self._tabs:
+        ttk.Button(
+import tkinter as tk
+        dialog.grab_set()
+        dialog.bind("<Escape>", lambda _e: dialog.destroy())
+            tab_btn.pack(side="left")
+        dialog.bind("<Return>", lambda _e: save())
+            padding=(8, 4),
+        except tk.TclError:
+                text=btn_text,
+        self.content_container.grid(row=1, column=0, sticky="nsew")
+        self.select_tab(self._tabs[0]["id"])
+            width=3,
+                self._render_tab_strip()
+        self._tabs.pop(closing_index)
+    return TabbedUI(root)
+        tab = self._get_tab(tab_id)
+        self.status_var.set(f"Added {tab_title}")
+                command=lambda tid=tab["id"]: self.close_tab(tid)
+        self._tab_counter += 1
+        # Rebuild all tab "buttons"
+        )
+    # Rendering
+            self.tab_strip,
+        ).pack(side="left")
+        sample_text = (
+        self.root.grid_rowconfigure(1, weight=1)
+            # Tab button (label area)
+        entry = ttk.Entry(frame, textvariable=name_var, width=30)
+class TabbedUI:
+        # Inline "New Tab" button
+                break
+        meta_label = ttk.Label(parent, text=f"Internal ID: {tab_id}")
+            if is_active:
+        # Status bar
+            tab["content"].grid_remove()
+            # Keep at least one tab around for usability
+            "title": tab_title,
+        self.tab_strip.grid(row=0, column=0, sticky="w")
+            close_btn.pack(side="left", padx=(2, 0))
+        self._create_initial_tabs()
+            self.root,
+            self.style.theme_use("clam")
+            command=lambda: self._rename_tab_dialog(tab_id)
+    def close_tab(self, tab_id: str) -> None:
+        def save():
+        text_box.grid(row=3, column=0, sticky="nsew")
+        self.add_tab(title="Tab 2")
+        # Top bar container
+            "- dynamic content panels\n\n"
+            new_index = min(closing_index, len(self._tabs) - 1)
+        content.grid(row=0, column=0, sticky="nsew")
+    """
+        self._tabs.append({
+    # Layout
+        btns = ttk.Frame(frame)
+        self.tab_strip = ttk.Frame(self.top_frame)
+                tab_btn.state(["disabled"])
+            "- an inline '+' button for new tabs\n"
+            "id": tab_id,
+        btns.grid(row=2, column=0, sticky="e")
+    def _create_initial_tabs(self) -> None:
+                width=3,
+            tab_frame = ttk.Frame(self.tab_strip, padding=(0, 0, 4, 0))
+        self.content_container.grid_rowconfigure(0, weight=1)
+                closing_index = i
+    def _get_tab(self, tab_id: str):
+            close_btn = ttk.Button(
+            tab_frame.pack(side="left", anchor="w")
+        try:
+        # Clear strip
+    def _rename_tab_dialog(self, tab_id: str) -> None:
+from tkinter import ttk
+        entry.focus_set()
+    - Starts with 3 tabs
+        entry.select_range(0, "end")
+
+        # Pick next active tab (same index if possible, else previous)
+            self._active_tab_id = self._tabs[new_index]["id"]
+    # Tab content
+                command=lambda tid=tab["id"]: self.select_tab(tid)
+        self.status_var.set(f"Closed {closing_tab['title']}")
+        tab_id = f"tab_{self._tab_counter}"
+        controls.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+                text="×",
+        # Theme/style (kept simple and stdlib-only)
+            # Give active tab a visual hint by disabling its main button
+            "- per-tab close controls\n"
+        ).pack(side="left", padx=(8, 0))
+        active = self._get_tab(self._active_tab_id)
+        self._tab_counter = 0
+        dialog.resizable(False, False)
+        })
+    def __init__(self, root: tk.Tk):
+            if new_name:
+            # Close button inline with tab
+        # Create content frame for this tab
+        self._build_layout()
+            active["content"].grid()
+        add_btn = ttk.Button(
+        self.top_frame.grid_columnconfigure(0, weight=1)
+        text_box.insert("1.0", sample_text)
+        self.status_var = tk.StringVar(value="Ready")

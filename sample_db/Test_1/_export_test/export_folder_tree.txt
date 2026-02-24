@@ -1,0 +1,14 @@
+Project Tree: Tripartite Export
+Generated: 2026-02-24 10:55:23.491871
+
+└── 📁 C:\/
+    └── 📁 Users/
+        └── 📁 jacob/
+            └── 📁 Documents/
+                └── 📁 _UsefulDataCurationTools/
+                    └── 📁 sample_docs/
+                        └── 📁 sample_app/
+                            ├── 📄 README.md
+                            ├── 📄 app.py
+                            ├── 📄 chunk_stream.txt
+                            └── 📄 ui.py

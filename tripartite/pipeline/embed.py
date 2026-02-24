@@ -135,6 +135,8 @@ def embed_chunks(
                 )
 
             except Exception as e:
+                # CRITICAL: Log failures so they don't go silent
+                print(f"[embed] chunk {chunk_id} failed: {e}")
                 conn.execute(
                     """
                     UPDATE chunk_manifest

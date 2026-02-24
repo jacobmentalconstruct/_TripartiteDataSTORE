@@ -30,6 +30,7 @@ _DEFAULT_EXTRACTOR = next(m["filename"] for m in KNOWN_MODELS if m["role"] == "e
 class Settings:
     embedder_filename:  str = field(default_factory=lambda: _DEFAULT_EMBEDDER)
     extractor_filename: str = field(default_factory=lambda: _DEFAULT_EXTRACTOR)
+    lazy_mode: bool = False  # Diagnostics: skip embedding and extraction for testing
 
     # ── Persistence ───────────────────────────────────────────────────────────
 

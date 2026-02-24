@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-from ..config import MODELS, MODELS_DIR
+from ..config import MODELS_DIR
 
 
 # ── Download helpers ───────────────────────────────────────────────────────────
@@ -71,18 +71,16 @@ def _download(url: str, dest: Path, filename: str) -> None:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def ensure_model(role: str) -> Path:
+def ensure_model(spec: dict) -> Path:
     """
-    Ensure the model for *role* ('embedder' | 'extractor') is present in the
-    cache directory.  Downloads if missing or clearly truncated, then returns
-    the local path.
+    Ensure the model described by *spec* is present in the cache directory.
+    Downloads if missing or clearly truncated, then returns the local path.
 
     Verification strategy: size check (not sha256).
     sha256 hashes are not bundled because they change with model updates on HF.
     A file above min_size_bytes is considered intact — a truncated download
     would be obviously smaller.
     """
-    spec = MODELS[role]
     dest = MODELS_DIR / spec["filename"]
     min_size = spec.get("min_size_bytes", 10_000_000)
 
@@ -95,7 +93,7 @@ def ensure_model(role: str) -> Path:
         dest.unlink()
 
     print(f"[model] {spec['filename']} not found in cache.")
-    print(f"[model] Downloading from Hugging Face (~{_size_hint(role)})…")
+    print(f"[model] Downloading from Hugging Face (~{_size_hint(spec)})…")
     _download(spec["url"], dest, spec["filename"])
 
     # Post-download size check
@@ -112,15 +110,18 @@ def ensure_model(role: str) -> Path:
     return dest
 
 
-def _size_hint(role: str) -> str:
-    sizes = {"embedder": "274 MB", "extractor": "398 MB"}
-    return sizes.get(role, "unknown size")
+def _size_hint(spec: dict) -> str:
+    """Estimate download size from spec min_size_bytes."""
+    min_mb = spec.get("min_size_bytes", 0) / 1_048_576
+    return f"~{min_mb:.0f} MB"
 
 
 # ── llama.cpp wrappers ─────────────────────────────────────────────────────────
 
 _embedder_instance = None
 _extractor_instance = None
+_embedder_model_name = None   # track which model is loaded
+_extractor_model_name = None
 _embedder_failed = False   # set True after first load failure — stops retrying
 _extractor_failed = False
 
@@ -130,8 +131,23 @@ def get_embedder():
     Return a loaded llama_cpp.Llama instance configured for embedding.
     Loads on first call; cached for the process lifetime.
     Returns None (without retrying) if the first load attempt failed for any reason.
+    
+    Automatically invalidates and reloads if the selected model in Settings has changed.
     """
-    global _embedder_instance, _embedder_failed
+    global _embedder_instance, _embedder_model_name, _embedder_failed
+    
+    # Read current selected model from Settings
+    from ..settings_store import Settings
+    settings = Settings.load()
+    current_filename = settings.embedder_filename
+    
+    # Invalidate cache if model changed
+    if _embedder_model_name is not None and _embedder_model_name != current_filename:
+        print(f"[model] Embedder changed from {_embedder_model_name} to {current_filename} — reloading.")
+        _embedder_instance = None
+        _embedder_model_name = None
+        _embedder_failed = False
+    
     if _embedder_instance is not None:
         return _embedder_instance
     if _embedder_failed:
@@ -139,8 +155,8 @@ def get_embedder():
 
     try:
         from llama_cpp import Llama
-        model_path = ensure_model("embedder")
-        spec = MODELS["embedder"]
+        spec = settings.get_embedder_spec()
+        model_path = ensure_model(spec)
         print(f"[model] Loading embedder ({spec['filename']})…", flush=True)
         _embedder_instance = Llama(
             model_path=str(model_path),
@@ -149,6 +165,7 @@ def get_embedder():
             n_threads=_cpu_threads(),
             verbose=False,
         )
+        _embedder_model_name = current_filename
         print("[model] ✓ Embedder ready.")
         return _embedder_instance
     except ImportError:
@@ -163,8 +180,23 @@ def get_extractor():
     """
     Return a loaded llama_cpp.Llama instance configured for text generation.
     Returns None (without retrying) if the first load attempt failed for any reason.
+    
+    Automatically invalidates and reloads if the selected model in Settings has changed.
     """
-    global _extractor_instance, _extractor_failed
+    global _extractor_instance, _extractor_model_name, _extractor_failed
+    
+    # Read current selected model from Settings
+    from ..settings_store import Settings
+    settings = Settings.load()
+    current_filename = settings.extractor_filename
+    
+    # Invalidate cache if model changed
+    if _extractor_model_name is not None and _extractor_model_name != current_filename:
+        print(f"[model] Extractor changed from {_extractor_model_name} to {current_filename} — reloading.")
+        _extractor_instance = None
+        _extractor_model_name = None
+        _extractor_failed = False
+    
     if _extractor_instance is not None:
         return _extractor_instance
     if _extractor_failed:
@@ -172,8 +204,8 @@ def get_extractor():
 
     try:
         from llama_cpp import Llama
-        model_path = ensure_model("extractor")
-        spec = MODELS["extractor"]
+        spec = settings.get_extractor_spec()
+        model_path = ensure_model(spec)
         print(f"[model] Loading extractor ({spec['filename']})…", flush=True)
         _extractor_instance = Llama(
             model_path=str(model_path),
@@ -181,6 +213,7 @@ def get_extractor():
             n_threads=_cpu_threads(),
             verbose=False,
         )
+        _extractor_model_name = current_filename
         print("[model] ✓ Extractor ready.")
         return _extractor_instance
     except ImportError:
@@ -200,6 +233,8 @@ def _cpu_threads() -> int:
 
 def unload_all() -> None:
     """Release both model instances (useful for testing)."""
-    global _embedder_instance, _extractor_instance
+    global _embedder_instance, _extractor_instance, _embedder_model_name, _extractor_model_name
     _embedder_instance = None
     _extractor_instance = None
+    _embedder_model_name = None
+    _extractor_model_name = None

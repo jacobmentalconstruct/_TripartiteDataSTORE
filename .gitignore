@@ -1,5 +1,5 @@
 # ============================================================
-# _theCELL / _UsefulHelperSCRIPTS - Python + Tkinter
+# _TripartiteDataSTORE / _UsefulHelperSCRIPTS - Python + Tkinter
 # ============================================================
 
 # --- Python bytecode / caches ---
@@ -88,8 +88,9 @@ vectors/
 .ipynb_checkpoints/
 
 # --- Optional: if you ever dump reports/maps locally ---
-*_project_map.txt
-*_filedump.txt
-*_folder_tree.txt
+# *_project_map.txt
+# *_filedump.txt
+# *_folder_tree.txt
+# _logs
 reports/
 output/
