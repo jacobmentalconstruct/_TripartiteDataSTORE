@@ -1,0 +1,56 @@
+# ============================================================
+# _TripartiteDataSTORE - Requirements
+# ============================================================
+# 
+# Core knowledge management system with multi-language code parsing
+# and semantic search capabilities.
+
+# ── Core Dependencies ──────────────────────────────────────────────
+
+# Embeddings and model inference (GGUF support)
+llama-cpp-python>=0.2.0
+
+# Multi-language code parsing (NEW - Tree-sitter integration)
+tree-sitter>=0.21.0
+tree-sitter-language-pack>=0.1.0
+
+# ── Optional: Individual Language Grammars ────────────────────────
+# Uncomment if tree-sitter-language-pack doesn't install properly
+# or if you need specific versions of language parsers
+
+# tree-sitter-python>=0.21.0
+# tree-sitter-javascript>=0.21.0
+# tree-sitter-typescript>=0.21.0
+# tree-sitter-java>=0.21.0
+# tree-sitter-go>=0.21.0
+# tree-sitter-rust>=0.21.0
+# tree-sitter-c>=0.21.0
+# tree-sitter-cpp>=0.22.0
+# tree-sitter-c-sharp>=0.21.0
+# tree-sitter-ruby>=0.21.0
+# tree-sitter-php>=0.22.0
+
+# ── Development Dependencies ───────────────────────────────────────
+# Uncomment if doing development work
+
+# pytest>=7.0.0              # Testing framework
+# pytest-cov>=4.0.0          # Coverage reports
+# black>=23.0.0              # Code formatting
+# ruff>=0.1.0                # Fast linting
+
+# ── Notes ──────────────────────────────────────────────────────────
+#
+# Installation:
+#   1. Run setup_env.bat (Windows) to create venv and install
+#   2. Or manually: python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
+#
+# Tree-sitter Support:
+#   - Enables AST-based chunking for 20+ programming languages
+#   - See treesitter_integration/ folder for documentation
+#   - Falls back gracefully if not installed
+#
+# llama-cpp-python:
+#   - Required for embedding generation
+#   - Supports GGUF model format
+#   - CPU and GPU variants available (this installs CPU version)
+#   - For GPU: pip install llama-cpp-python[cuda] (NVIDIA) or [metal] (Apple)

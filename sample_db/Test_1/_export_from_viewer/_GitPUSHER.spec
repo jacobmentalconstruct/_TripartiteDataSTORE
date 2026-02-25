@@ -1,0 +1,36 @@
+exe = EXE(
+    runtime_tmpdir=None,
+    ['C:\\Users\\jacob\\Documents\\_UsefulHelperSCRIPTS\\_GitPUSHER\\src\\app.py'],
+    strip=False,
+    a.datas,
+    runtime_hooks=[],
+    console=False,
+    a.scripts,
+pyz = PYZ(a.pure)
+    bootloader_ignore_signals=False,
+    excludes=[],
+    debug=False,
+    a.binaries,
+    name='_GitPUSHER',
+    hookspath=[],
+    [],
+    pathex=['C:\\Users\\jacob\\Documents\\_UsefulHelperSCRIPTS\\_GitPUSHER'],
+# -*- mode: python ; coding: utf-8 -*-
+    codesign_identity=None,
+    target_arch=None,
+    binaries=[],
+    upx=True,
+    noarchive=False,
+    hooksconfig={},
+    optimize=0,
+)
+    icon=['C:\\Users\\jacob\\Documents\\_UsefulHelperSCRIPTS\\_GitPUSHER\\assets\\icons\\_GitPUSHER.ico'],
+    datas=[('C:\\Users\\jacob\\Documents\\_UsefulHelperSCRIPTS\\_GitPUSHER\\assets', 'assets'), ('C:\\Users\\jacob\\Documents\\_UsefulHelperSCRIPTS\\_GitPUSHER\\assets', 'assets'), ('C:\\Users\\jacob\\Documents\\_UsefulHelperSCRIPTS\\_GitPUSHER\\src', 'src')],
+    pyz,
+    upx_exclude=[],
+a = Analysis(
+    argv_emulation=False,
+    hiddenimports=[],
+
+    disable_windowed_traceback=False,
+    entitlements_file=None,

@@ -255,16 +255,20 @@ class TripartiteApp(tk.Tk):
     # ── Settings ──────────────────────────────────────────────────────────────
 
     def _open_settings(self):
-        from .settings_dialog import SettingsDialog
-        dlg = SettingsDialog(self)
-        self.wait_window(dlg)
-        self._settings = Settings.load()
-        from . import models
-        models.manager._embedder_instance  = None
-        models.manager._extractor_instance = None
-        models.manager._embedder_failed    = False
-        models.manager._extractor_failed   = False
-        self._set_action("Settings saved — models will reload on next run.")
+            from .settings_dialog import SettingsDialog
+            dlg = SettingsDialog(self)
+            self.wait_window(dlg)
+            self._settings = Settings.load()
+            
+            # 1. Correct import
+            from .models import manager
+            
+            # 2. Use 'manager' directly (remove 'models.' prefix)
+            manager._embedder_instance  = None
+            manager._extractor_instance = None
+            manager._embedder_failed    = False
+            manager._extractor_failed   = False
+            self._set_action("Settings saved — models will reload on next run.")
 
     def _prompt_download(self, role: str) -> bool:
         """Ask user if they want to open Settings to download the missing model."""

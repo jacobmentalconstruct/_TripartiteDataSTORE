@@ -39,10 +39,30 @@ from ..utils import stable_uuid
 # ── Chunker registry ───────────────────────────────────────────────────────────
 
 def _get_chunker(source: SourceFile):
-    """Return the appropriate chunker for a source file."""
-    if source.source_type == "code" and source.language == "python":
-        return PythonChunker(), "ast_python_v1"
-    # Default: prose chunker handles markdown, text, generic, and non-Python code
+    """
+    Return the appropriate chunker for a source file.
+    
+    Priority:
+    1. TreeSitterChunker for supported code languages (20+ languages)
+    2. PythonChunker for .py files (fallback if tree-sitter unavailable)
+    3. ProseChunker for markdown, text, and generic files
+    """
+    from ..chunkers.treesitter import get_treesitter_chunker
+    
+    # Try tree-sitter first for all code files
+    if source.source_type == "code":
+        ts_chunker = get_treesitter_chunker(source)
+        if ts_chunker is not None:
+            # Determine version string from language
+            ext = source.path.suffix.lower()
+            lang = source.language or ext.lstrip(".")
+            return ts_chunker, f"treesitter_{lang}_v1"
+        
+        # Fallback to Python AST chunker for .py files if tree-sitter unavailable
+        if source.language == "python":
+            return PythonChunker(), "ast_python_v1"
+    
+    # Default: prose chunker for markdown, text, generic, and unsupported code
     return ProseChunker(), "prose_v1"
 
 

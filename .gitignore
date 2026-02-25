@@ -1,8 +1,8 @@
 # ============================================================
-# _TripartiteDataSTORE / _UsefulHelperSCRIPTS - Python + Tkinter
+# _TripartiteDataSTORE - Git Ignore Rules
 # ============================================================
 
-# --- Python bytecode / caches ---
+# ── Python Runtime & Caches ────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -15,7 +15,7 @@ __pycache__/
 .coverage.*
 htmlcov/
 
-# --- Virtual environments (keep crawlers out) ---
+# ── Virtual Environments ───────────────────────────────────────
 .venv/
 venv/
 ENV/
@@ -24,33 +24,29 @@ env/
 .condarc
 pip-wheel-metadata/
 
-# --- Packaging / build artifacts ---
+# ── Build & Distribution ───────────────────────────────────────
 build/
 dist/
 *.egg-info/
 .eggs/
 pip-log.txt
+*.whl
 
-# --- IDE / editor ---
+# ── IDE & Editors ──────────────────────────────────────────────
 .vscode/
 .idea/
 *.code-workspace
-
-# --- OS junk ---
-.DS_Store
-Thumbs.db
-Desktop.ini
-
-# --- Logs / temp ---
-*.log
-*.tmp
-*.temp
 *.swp
 *~
-.cache/
-_logs
+.DS_Store
 
-# --- App persistence / generated data ---
+# ── Operating System ───────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ── Application Data (Generated) ───────────────────────────────
+# SQLite databases
 _db/
 *.db
 *.sqlite
@@ -60,13 +56,20 @@ _db/
 *.wal
 *.shm
 
-# --- JSONL / session artifacts (generated) ---
+# JSONL session/memory files
 *.jsonl
 memory_archive_*.jsonl
 working_memory*.jsonl
 session_*.jsonl
 
-# --- Common local config/secrets (don’t commit) ---
+# Logs & temp files
+*.log
+*.tmp
+*.temp
+.cache/
+_logs/
+
+# ── Secrets & Local Config ─────────────────────────────────────
 .env
 .env.*
 *.env
@@ -75,7 +78,7 @@ config.local.json
 app_config.json
 app_config.json.tmp
 
-# --- Vector / RAG stores (often large + machine-local) ---
+# ── Vector & Knowledge Base Stores ─────────────────────────────
 knowledge_base/
 chroma/
 chromadb/
@@ -84,13 +87,58 @@ vectors/
 *.faiss
 *.index
 
-# --- Jupyter / notebooks (if any) ---
-.ipynb_checkpoints/
+# ── Model Files (Large) ────────────────────────────────────────
+# Uncomment to exclude GGUF models from git (they're large!)
+# *.gguf
+# models/
+# embeddings/
 
-# --- Optional: if you ever dump reports/maps locally ---
+# ── Jupyter / Notebooks ────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Optional: Project Reports/Maps ─────────────────────────────
+# Uncomment if you generate these frequently and don't want them in git
 # *_project_map.txt
 # *_filedump.txt
 # *_folder_tree.txt
-# _logs
-reports/
-output/
+
+# ── Tree-sitter Generated Files ────────────────────────────────
+# Language grammars are installed via pip, no need to commit
+# If you manually build grammars, uncomment:
+# tree-sitter-*.so
+# tree-sitter-*.dylib
+# tree-sitter-*.dll
+
+# ── Test Output ────────────────────────────────────────────────
+test_output/
+test_*.db
+coverage.xml
+.tox/
+
+# ── Documentation Builds ───────────────────────────────────────
+docs/_build/
+docs/.doctrees/
+site/
+
+# ══════════════════════════════════════════════════════════════
+# Project-Specific Exceptions
+# ══════════════════════════════════════════════════════════════
+
+# DO commit these documentation/config files:
+!README.md
+!requirements.txt
+!setup_env.bat
+!setup_env.sh
+!.gitignore
+!LICENSE.md
+!pyproject.toml
+!tripartite.spec
+
+# DO commit the treesitter integration package:
+!treesitter_integration/
+!treesitter_integration/**
+
+# DO commit example/test files if needed:
+!tests/
+!tests/**

@@ -1,0 +1,182 @@
+name: Build Release Bundles
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags (v1.0.0, v1.1.0, etc.)
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+      profiles:
+        description: 'Profiles to build (space-separated: balanced code_heavy speed)'
+        required: true
+        default: 'balanced code_heavy speed'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      
+      - name: Extract version
+        id: get_version
+        run: |
+          if ($env:GITHUB_REF -match 'refs/tags/v(.*)') {
+            echo "VERSION=$($matches[1])" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "VERSION=${{ github.event.inputs.version }}" >> $env:GITHUB_OUTPUT
+          }
+        shell: pwsh
+      
+      - name: Build Windows bundles
+        run: |
+          python build_release.py --version ${{ steps.get_version.outputs.VERSION }} --profiles ${{ github.event.inputs.profiles || 'balanced code_heavy speed' }}
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-releases
+          path: releases/*.zip
+          retention-days: 7
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      
+      - name: Extract version
+        id: get_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Build macOS bundles
+        run: |
+          python build_release.py --version ${{ steps.get_version.outputs.VERSION }} --profiles ${{ github.event.inputs.profiles || 'balanced code_heavy speed' }}
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: macos-releases
+          path: releases/*.zip
+          retention-days: 7
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      
+      - name: Extract version
+        id: get_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Build Linux bundles
+        run: |
+          python build_release.py --version ${{ steps.get_version.outputs.VERSION }} --profiles ${{ github.event.inputs.profiles || 'balanced code_heavy speed' }}
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: linux-releases
+          path: releases/*.zip
+          retention-days: 7
+
+  create-release:
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')  # Only create release for version tags
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: releases
+      
+      - name: Extract version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Tripartite v${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## Tripartite Knowledge Store v${{ steps.get_version.outputs.VERSION }}
+            
+            ### Download the bundle for your platform and use case:
+            
+            **Windows:**
+            - `tripartite-balanced-v${{ steps.get_version.outputs.VERSION }}-windows.zip` - General use (1.1 GB)
+            - `tripartite-code_heavy-v${{ steps.get_version.outputs.VERSION }}-windows.zip` - Codebases (1.7 GB)
+            - `tripartite-speed-v${{ steps.get_version.outputs.VERSION }}-windows.zip` - Fast (420 MB)
+            
+            **macOS:**
+            - `tripartite-balanced-v${{ steps.get_version.outputs.VERSION }}-macos.zip`
+            - `tripartite-code_heavy-v${{ steps.get_version.outputs.VERSION }}-macos.zip`
+            - `tripartite-speed-v${{ steps.get_version.outputs.VERSION }}-macos.zip`
+            
+            **Linux:**
+            - `tripartite-balanced-v${{ steps.get_version.outputs.VERSION }}-linux.zip`
+            - `tripartite-code_heavy-v${{ steps.get_version.outputs.VERSION }}-linux.zip`
+            - `tripartite-speed-v${{ steps.get_version.outputs.VERSION }}-linux.zip`
+            
+            ### Quick Start:
+            1. Download the appropriate bundle for your OS and use case
+            2. Extract the zip file
+            3. Run the executable (no Python installation required!)
+            4. Models are included - ready to use immediately
+            
+            ### Changes in this release:
+            - See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
+          files: |
+            releases/**/*.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
