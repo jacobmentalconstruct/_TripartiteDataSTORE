@@ -2818,16 +2818,16 @@ class TripartiteDataStore:
         results = []
         try:
             rows = self.conn.execute("""
-                SELECT gn.node_id, gn.node_type, gn.name, gn.properties
+                SELECT gn.node_id, gn.node_type, gn.label, gn.entity_type
                 FROM graph_nodes gn
-                WHERE gn.name LIKE ?
+                WHERE gn.label LIKE ?
                 LIMIT ?
             """, (f"%{query}%", top_k)).fetchall()
 
-            for node_id, node_type, name, props in rows:
+            for node_id, node_type, label, entity_type in rows:
                 score = 0.5
-                preview = props[:200] if props else name
-                results.append((score, node_type, name, preview))
+                preview = f"[{entity_type}] {label}" if entity_type else label
+                results.append((score, node_type, label, preview))
         except Exception as e:
             self._log("Query", f"Graph search error: {e}", "warning")
 
