@@ -25,6 +25,8 @@ SCHEMA_SQL = """
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA synchronous = NORMAL;
+PRAGMA mmap_size = 30000000000;
+PRAGMA temp_store = MEMORY;
 
 -- ── Layer 1: Verbatim ──────────────────────────────────────────────────────
 
