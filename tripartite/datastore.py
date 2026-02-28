@@ -376,8 +376,8 @@ class ViewerPanel(tk.Frame):
                 fp = Path(item.path)
                 if fp.exists():
                     content = fp.read_text(encoding="utf-8")
-            except Exception:
-                pass
+            except Exception as e:
+                self.stack.app._log("Viewer", f"File read failed: {e}", "error")
 
         if content is None:
             content = "(content not available)"
@@ -414,8 +414,8 @@ class ViewerPanel(tk.Frame):
                 ).fetchone()
                 if row and row[2]:
                     content = row[2]
-            except Exception:
-                pass
+            except Exception as e:
+                self.stack.app._log("Viewer", f"Chunk load failed: {e}", "error")
 
         # Fallback: try line range from source file
         if content is None and app.conn and item.file_cid and item.line_start is not None:
@@ -434,6 +434,7 @@ class ViewerPanel(tk.Frame):
             self._display_content("(no database connected)")
             return
 
+        rows = []
         try:
             rows = app.conn.execute(
                 "SELECT node_type, name, language_tier "
@@ -442,12 +443,13 @@ class ViewerPanel(tk.Frame):
             ).fetchall()
             lines = [f"{NODE_ICONS.get(r[0], '▪')} {r[1]}  [{r[2]}]" for r in rows]
             content = f"Directory: {item.name}\n{'─' * 40}\n" + "\n".join(lines)
-        except Exception:
+        except Exception as e:
+            self.stack.app._log("Viewer", f"Directory listing failed: {e}", "error")
             content = "(could not list directory)"
 
         self._content = content
         self._version = None
-        self._ver_label.configure(text=f"{len(rows) if 'rows' in dir() else 0} items")
+        self._ver_label.configure(text=f"{len(rows)} items")
         self._display_content(content)
 
     # ── DB reconstruction helpers ─────────────────────────────────────
@@ -471,7 +473,8 @@ class ViewerPanel(tk.Frame):
                     f"WHERE line_cid IN ({placeholders})", cids):
                 lines_map[r[0]] = r[1]
             return "\n".join(lines_map.get(cid, "") for cid in cids)
-        except Exception:
+        except Exception as e:
+            self.stack.app._log("Viewer", f"DB reconstruct failed: {e}", "error")
             return None
 
     def _reconstruct_lines(self, file_cid: str,
@@ -498,7 +501,8 @@ class ViewerPanel(tk.Frame):
                     f"WHERE line_cid IN ({placeholders})", subset):
                 lines_map[r[0]] = r[1]
             return "\n".join(lines_map.get(cid, "") for cid in subset)
-        except Exception:
+        except Exception as e:
+            self.stack.app._log("Viewer", f"Line reconstruct failed: {e}", "error")
             return None
 
     # ── Version scrubbing ─────────────────────────────────────────────
@@ -655,10 +659,18 @@ class TripartiteDataStore:
         self._ingest_thread: Optional[threading.Thread] = None
         self.diff_engine: Optional["DiffEngine"] = None
         self._patch_engine_cls: Optional[type] = None
+        self._db_lock = threading.Lock()
 
         # HITL gateway — single chokepoint for all human decisions
         from .hitl import HITLGateway
         self.hitl = HITLGateway(self.root, log_callback=self._log)
+
+        # Settings (model selection, lazy mode, etc.)
+        try:
+            from .settings_store import Settings
+            self._settings = Settings.load()
+        except Exception:
+            self._settings = None
 
         self._setup_styles()
         self._build_ui()
@@ -1114,6 +1126,12 @@ class TripartiteDataStore:
                        variable=self._ingest_graph, bg=BG2, fg=FG,
                        selectcolor=BG, font=FONT_SM,
                        activebackground=BG2).pack(side="left", padx=10, pady=6)
+        self._ingest_lazy = tk.BooleanVar(
+            value=self._settings.lazy_mode if self._settings else False)
+        tk.Checkbutton(opts_frame, text="Lazy mode",
+                       variable=self._ingest_lazy, bg=BG2, fg=FG,
+                       selectcolor=BG, font=FONT_SM,
+                       activebackground=BG2).pack(side="left", padx=10, pady=6)
         tk.Checkbutton(opts_frame, text="Detect compound docs",
                        variable=self._ingest_compound, bg=BG2, fg=FG,
                        selectcolor=BG, font=FONT_SM,
@@ -1557,12 +1575,8 @@ class TripartiteDataStore:
                 try:
                     item = self._selected_item
                     if item.chunk_id:
-                        row = self.conn.execute(
-                            "SELECT content FROM chunk_manifest WHERE chunk_id = ?",
-                            (item.chunk_id,)).fetchone()
-                        if row and row[0]:
-                            content = row[0]
-                        else:
+                        content = self._reconstruct_chunk_text(item.chunk_id)
+                        if not content:
                             self._patch_log_msg("No content found", "warning")
                             return
                     else:
@@ -1869,8 +1883,8 @@ class TripartiteDataStore:
         if fp.exists():
             try:
                 fp.write_text(content, encoding="utf-8")
-            except Exception:
-                pass
+            except Exception as e:
+                self._log("Patch", f"Undo write failed: {e}", "error")
 
     def _patch_show_history(self):
         """Show version history for the current file."""
@@ -2026,8 +2040,8 @@ class TripartiteDataStore:
                         diff_db = Path(path).parent / "diffs.db"
                         self.diff_engine = m.DiffEngine(db_path=diff_db)
                         self._log("DB", f"DiffEngine: {diff_db.name}", "dim")
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._log("DB", f"DiffEngine load failed: {e}", "warning")
 
             # Populate panels
             self._load_explorer()
@@ -2045,8 +2059,8 @@ class TripartiteDataStore:
                 # Checkpoint WAL so .db-wal and .db-shm get merged into .db
                 try:
                     self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[exit] WAL checkpoint failed: {e}")
                 self.conn.close()
                 self.conn = None
             if self.diff_engine:
@@ -2054,12 +2068,60 @@ class TripartiteDataStore:
                     if hasattr(self.diff_engine, 'conn') and self.diff_engine.conn:
                         self.diff_engine.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                         self.diff_engine.conn.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[exit] DiffEngine cleanup failed: {e}")
                 self.diff_engine = None
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[exit] Shutdown error: {e}")
         self.root.destroy()
+
+    # ── DB Helpers ────────────────────────────────────────────────────────
+
+    def _reconstruct_chunk_text(self, chunk_id: str) -> Optional[str]:
+        """Reconstruct chunk text from chunk_manifest.spans + verbatim_lines.
+
+        The chunk_manifest table stores spans as a JSON array of
+        {source_cid, line_start, line_end} objects. We join through
+        source_files.line_cids to get the actual verbatim_lines content.
+        """
+        if not self.conn:
+            return None
+        try:
+            row = self.conn.execute(
+                "SELECT spans FROM chunk_manifest WHERE chunk_id = ?",
+                (chunk_id,)).fetchone()
+            if not row or not row[0]:
+                return None
+
+            spans = json.loads(row[0])
+            parts = []
+            for span in spans:
+                src_cid = span.get("source_cid")
+                ls = span.get("line_start", 0)
+                le = span.get("line_end", ls)
+                if not src_cid:
+                    continue
+                sf_row = self.conn.execute(
+                    "SELECT line_cids FROM source_files WHERE file_cid = ?",
+                    (src_cid,)).fetchone()
+                if not sf_row or not sf_row[0]:
+                    continue
+                all_cids = json.loads(sf_row[0])
+                subset = all_cids[max(0, ls):le + 1]
+                if not subset:
+                    continue
+                placeholders = ",".join("?" * len(subset))
+                lines_map = {}
+                for r in self.conn.execute(
+                        f"SELECT line_cid, content FROM verbatim_lines "
+                        f"WHERE line_cid IN ({placeholders})", subset):
+                    lines_map[r[0]] = r[1]
+                parts.append("\n".join(lines_map.get(cid, "") for cid in subset))
+
+            return "\n".join(parts) if parts else None
+        except Exception as e:
+            self._log("DB", f"Chunk text reconstruct failed: {e}", "error")
+            return None
 
     # ══════════════════════════════════════════════════════════════════════
     #  EXPLORER — Full tree loading with directory reconstruction
@@ -2516,11 +2578,9 @@ class TripartiteDataStore:
         if not self.conn:
             return
         try:
-            row = self.conn.execute(
-                "SELECT content FROM chunk_manifest WHERE chunk_id = ?",
-                (chunk_id,)).fetchone()
-            if row and row[0]:
-                self._copy_to_clipboard(row[0])
+            content = self._reconstruct_chunk_text(chunk_id)
+            if content:
+                self._copy_to_clipboard(content)
             else:
                 self._log("Explorer", "No text found for this chunk", "warning")
         except Exception as e:
@@ -2700,19 +2760,21 @@ class TripartiteDataStore:
 
             if q_vec is not None:
                 rows = self.conn.execute("""
-                    SELECT cm.chunk_id, cm.chunk_type, cm.name,
-                           cm.content, cm.embedding
+                    SELECT cm.chunk_id, cm.chunk_type, tn.name,
+                           e.vector
                     FROM chunk_manifest cm
-                    WHERE cm.embed_status = 'done' AND cm.embedding IS NOT NULL
+                    JOIN embeddings e ON e.chunk_id = cm.chunk_id
+                    LEFT JOIN tree_nodes tn ON tn.chunk_id = cm.chunk_id
+                    WHERE cm.embed_status = 'done'
                 """).fetchall()
 
                 import numpy as np
-                for chunk_id, chunk_type, name, content, emb_blob in rows:
+                for chunk_id, chunk_type, name, emb_blob in rows:
                     emb = np.frombuffer(emb_blob, dtype=np.float32)
                     score = float(np.dot(q_vec, emb) / (
                         np.linalg.norm(q_vec) * np.linalg.norm(emb) + 1e-10))
-                    preview = (content or name or "")[:200]
-                    results.append((score, chunk_type, name, preview))
+                    preview = (name or chunk_type or "")[:200]
+                    results.append((score, chunk_type, name or "", preview))
 
                 results.sort(key=lambda r: r[0], reverse=True)
                 return results[:top_k]
@@ -2728,20 +2790,23 @@ class TripartiteDataStore:
         """Search verbatim layer using LIKE matching."""
         results = []
         try:
+            # Use FTS if available, otherwise fall back to verbatim_lines LIKE
             rows = self.conn.execute("""
-                SELECT cm.chunk_id, cm.chunk_type, cm.name, cm.content
+                SELECT cm.chunk_id, cm.chunk_type, tn.name, cm.context_prefix
                 FROM chunk_manifest cm
-                WHERE cm.content LIKE ?
+                LEFT JOIN tree_nodes tn ON tn.chunk_id = cm.chunk_id
+                WHERE cm.context_prefix LIKE ?
+                   OR tn.name LIKE ?
                 LIMIT ?
-            """, (f"%{query}%", top_k)).fetchall()
+            """, (f"%{query}%", f"%{query}%", top_k)).fetchall()
 
-            for chunk_id, chunk_type, name, content in rows:
-                # Simple relevance score based on match density
-                content_lower = (content or "").lower()
+            for chunk_id, chunk_type, name, ctx_prefix in rows:
+                # Simple relevance score
+                content_lower = (ctx_prefix or "").lower()
                 query_lower = query.lower()
                 count = content_lower.count(query_lower)
                 score = min(count * 0.2, 1.0) if count else 0.1
-                preview = (content or "")[:200]
+                preview = (ctx_prefix or name or "")[:200]
                 results.append((score, chunk_type, name, preview))
         except Exception as e:
             self._log("Query", f"Verbatim search error: {e}", "warning")
@@ -2915,6 +2980,18 @@ class TripartiteDataStore:
             self._log("Ingest", "Ingest already running", "warning")
             return
 
+        # Pre-ingest validation: model mismatch + download check
+        lazy = self._ingest_lazy.get()
+        if not lazy and self._settings:
+            # Check model mismatch against existing DB
+            if not self._check_model_mismatch():
+                return
+            # Check embedder is cached
+            if not self._settings.model_is_cached("embedder"):
+                if not self._prompt_download("embedder"):
+                    self._log("Ingest", "Embedder not available — use lazy mode or download", "warning")
+                    return
+
         self._ingest_cancel = False
         self._ingest_thread = threading.Thread(
             target=self._run_ingest, args=(source,), daemon=True)
@@ -2927,42 +3004,55 @@ class TripartiteDataStore:
         self._log("Ingest", "Stop requested", "warning")
 
     def _run_ingest(self, source_path: str):
-        """Run the full ingest pipeline in a background thread."""
+        """Run the full ingest pipeline in a background thread.
+
+        Delegates to the proper pipeline functions in pipeline/ingest.py
+        which correctly write verbatim_lines, source_files, tree_nodes,
+        chunk_manifest, embeddings, and graph tables.
+        """
         try:
             path = Path(source_path)
             if not path.exists():
                 self._ingest_log_append(f"Path not found: {source_path}", "error")
                 return
 
-            # Try to import the pipeline
+            # Import pipeline
             try:
                 from .pipeline.detect import walk_source, detect
-                from .pipeline.detect import SourceFile
+                from .pipeline.ingest import _ingest_file, _get_chunker
             except ImportError:
                 self._ingest_log_append(
                     "Pipeline not available — ensure tripartite package is installed",
                     "error")
                 return
 
+            # Determine lazy mode from checkbox
+            lazy = self._ingest_lazy.get()
+
             # Discover files
-            self._ingest_log_append("Scanning source…", "accent")
+            self._ingest_log_append("Scanning source...", "accent")
             candidates = list(walk_source(path))
             total = len(candidates)
             self._ingest_log_append(f"Found {total} candidate files", "info")
+            if lazy:
+                self._ingest_log_append("Mode: lazy (no embedding)", "dim")
 
             if total == 0:
                 self._ingest_log_append("No files to ingest", "warning")
                 return
 
-            # Process each file
+            # Process each file through the real pipeline
             processed = 0
+            chunks_total = 0
+            embedded_total = 0
             errors = 0
+
             for i, fpath in enumerate(candidates):
                 if self._ingest_cancel:
                     self._ingest_log_append("Ingest cancelled by user", "warning")
                     break
 
-                # Update progress
+                # Update progress bar
                 pct = ((i + 1) / total) * 100
                 self.root.after(0, lambda p=pct: self._ingest_progress.configure(value=p))
                 self.root.after(0, lambda n=i+1, t=total:
@@ -2973,45 +3063,57 @@ class TripartiteDataStore:
                     if sf is None:
                         continue
 
-                    # Check for compound document
-                    if self._ingest_compound.get():
-                        try:
-                            from .chunkers.compound import is_compound_document
-                            if is_compound_document(sf):
-                                sf_type = "compound"
+                    # Pipeline progress callback → ingest log
+                    def _on_progress(event, _fname=fpath.name):
+                        etype = event.get("type", "")
+                        if etype == "chunk_progress":
+                            ci = event.get("chunk_idx", 0)
+                            ct = event.get("chunk_total", 0)
+                            if ci == 0:
                                 self._ingest_log_append(
-                                    f"  📎 Compound: {fpath.name}", "accent")
-                        except ImportError:
-                            pass
+                                    f"  Chunking {_fname} ({ct} chunks)...", "dim")
+                        elif etype == "embedding_progress":
+                            ci = event.get("chunk_idx", 0)
+                            ct = event.get("chunk_total", 0)
+                            if (ci + 1) % 20 == 0:
+                                self._ingest_log_append(
+                                    f"    Embedded {ci+1}/{ct}", "dim")
 
-                    # Get appropriate chunker
-                    chunker = self._get_chunker(sf)
-                    chunks = chunker.chunk(sf)
-
-                    # Store chunks
-                    self._store_chunks(sf, chunks)
+                    # Run the full per-file pipeline (verbatim, tree, manifest, embed, graph)
+                    with self.conn:
+                        fc, fe = _ingest_file(
+                            self.conn, sf,
+                            lazy=lazy,
+                            verbose=False,
+                            on_progress=_on_progress,
+                        )
+                        chunks_total += fc
+                        embedded_total += fe
 
                     processed += 1
                     self._ingest_log_append(
-                        f"  ✓ {fpath.name} ({len(chunks)} chunks)", "success")
+                        f"  \u2713 {fpath.name} ({fc} chunks)", "success")
 
                 except Exception as e:
                     errors += 1
                     self._ingest_log_append(
-                        f"  ✗ {fpath.name}: {e}", "error")
-
-            # Embedding pass
-            if self._ingest_embed.get() and processed > 0:
-                self._ingest_log_append("\nStarting embedding pass…", "accent")
-                self._run_embedding_pass()
+                        f"  \u2717 {fpath.name}: {e}", "error")
 
             # Summary
-            self._ingest_log_append(
-                f"\nDone: {processed} files, {errors} errors", "success")
+            summary = (
+                f"\nDone: {processed} files, {chunks_total} chunks, "
+                f"{embedded_total} embedded, {errors} errors"
+            )
+            self._ingest_log_append(summary, "success")
             self._log("Ingest", f"Complete: {processed} files", "success")
 
-            # Refresh explorer
+            # Post-ingest stats
+            self._show_ingest_stats()
+
+            # Refresh explorer and panels
             self.root.after(0, self._load_explorer)
+            self.root.after(0, self._load_dblist)
+            self.root.after(0, self._refresh_graph)
             self.root.after(0, lambda: self._update_status("READY"))
 
         except Exception as e:
@@ -3019,155 +3121,28 @@ class TripartiteDataStore:
             self._ingest_log_append(traceback.format_exc(), "error")
             self.root.after(0, lambda: self._update_status("ERROR"))
 
-    def _get_chunker(self, sf):
-        """Select the right chunker based on source type."""
-        # Try compound first
-        if self._ingest_compound.get():
-            try:
-                from .chunkers.compound import is_compound_document, CompoundDocumentChunker
-                if is_compound_document(sf):
-                    return CompoundDocumentChunker()
-            except ImportError:
-                pass
-
-        # Try tree-sitter for code
-        if sf.source_type == "code":
-            try:
-                from .chunkers.treesitter import TreeSitterChunker
-                return TreeSitterChunker()
-            except ImportError:
-                pass
-
-        # Default: prose
-        try:
-            from .chunkers.prose import ProseChunker
-            return ProseChunker()
-        except ImportError:
-            pass
-
-        # Absolute fallback
-        from .chunkers.base import BaseChunker
-        return BaseChunker()
-
-    def _store_chunks(self, sf, chunks):
-        """Store source file and chunks into the database."""
+    def _show_ingest_stats(self):
+        """Show post-ingest database stats in the log."""
         if not self.conn:
             return
-
-        # Store source file
         try:
-            self.conn.execute("""
-                INSERT OR REPLACE INTO source_files
-                (file_cid, path, source_type, language, encoding, byte_size)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (sf.file_cid, str(sf.path), sf.source_type,
-                  sf.language, sf.encoding, sf.byte_size))
-        except Exception:
-            pass
+            def q(sql):
+                row = self.conn.execute(sql).fetchone()
+                return row[0] if row else 0
+            files = q("SELECT COUNT(*) FROM source_files")
+            chunks = q("SELECT COUNT(*) FROM chunk_manifest")
+            embedded = q("SELECT COUNT(*) FROM chunk_manifest WHERE embed_status='done'")
+            nodes = q("SELECT COUNT(*) FROM graph_nodes")
+            edges = q("SELECT COUNT(*) FROM graph_edges")
+            size_mb = Path(self.db_path).stat().st_size / 1_048_576 if self.db_path else 0
 
-        # Store chunks
-        for chunk in chunks:
-            try:
-                chunk_id = f"{sf.file_cid}:{chunk.name}:{chunk.spans[0].line_start if chunk.spans else 0}"
-                self.conn.execute("""
-                    INSERT OR REPLACE INTO chunk_manifest
-                    (chunk_id, node_id, chunk_type, name, content,
-                     file_cid, line_start, line_end, token_count,
-                     embed_status, language_tier, heading_path,
-                     semantic_depth, structural_depth, context_prefix)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    chunk_id, chunk_id, chunk.chunk_type, chunk.name,
-                    chunk.text if chunk.spans else "",
-                    sf.file_cid,
-                    chunk.spans[0].line_start if chunk.spans else None,
-                    chunk.spans[-1].line_end if chunk.spans else None,
-                    getattr(chunk, 'token_count', 0),
-                    "pending",
-                    getattr(chunk, 'language_tier', 'unknown'),
-                    json.dumps(chunk.heading_path) if chunk.heading_path else "[]",
-                    getattr(chunk, 'semantic_depth', 0),
-                    getattr(chunk, 'structural_depth', 0),
-                    getattr(chunk, 'context_prefix', ''),
-                ))
-
-                # Tree node
-                self.conn.execute("""
-                    INSERT OR REPLACE INTO tree_nodes
-                    (node_id, node_type, name, parent_id, path, depth,
-                     file_cid, line_start, line_end, language_tier, chunk_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    chunk_id, chunk.chunk_type, chunk.name,
-                    None,  # parent_id handled by hierarchy logic
-                    str(sf.path), chunk.depth,
-                    sf.file_cid,
-                    chunk.spans[0].line_start if chunk.spans else None,
-                    chunk.spans[-1].line_end if chunk.spans else None,
-                    getattr(chunk, 'language_tier', 'unknown'),
-                    chunk_id,
-                ))
-            except Exception as e:
-                self._ingest_log_append(f"    Store error: {e}", "warning")
-
-        self.conn.commit()
-
-    def _run_embedding_pass(self):
-        """Embed all pending chunks."""
-        try:
-            from .models.manager import ModelManager
-            mm = ModelManager()
-
-            pending = self.conn.execute(
-                "SELECT chunk_id, content FROM chunk_manifest "
-                "WHERE embed_status = 'pending' AND content IS NOT NULL"
-            ).fetchall()
-
-            total = len(pending)
-            self._ingest_log_append(f"Embedding {total} chunks…", "info")
-
-            for i, (chunk_id, content) in enumerate(pending):
-                if self._ingest_cancel:
-                    break
-                if not content or not content.strip():
-                    self.conn.execute(
-                        "UPDATE chunk_manifest SET embed_status='skipped' "
-                        "WHERE chunk_id=?", (chunk_id,))
-                    continue
-
-                try:
-                    vec = mm.embed(content)
-                    if vec is not None:
-                        import numpy as np
-                        blob = np.array(vec, dtype=np.float32).tobytes()
-                        self.conn.execute(
-                            "UPDATE chunk_manifest SET embedding=?, "
-                            "embed_status='done' WHERE chunk_id=?",
-                            (blob, chunk_id))
-                    else:
-                        self.conn.execute(
-                            "UPDATE chunk_manifest SET embed_status='error' "
-                            "WHERE chunk_id=?", (chunk_id,))
-                except Exception:
-                    self.conn.execute(
-                        "UPDATE chunk_manifest SET embed_status='error' "
-                        "WHERE chunk_id=?", (chunk_id,))
-
-                if (i + 1) % 50 == 0:
-                    self.conn.commit()
-                    self._ingest_log_append(f"  Embedded {i + 1}/{total}", "dim")
-
-            self.conn.commit()
-            done = self.conn.execute(
-                "SELECT COUNT(*) FROM chunk_manifest WHERE embed_status='done'"
-            ).fetchone()[0]
-            self._ingest_log_append(f"Embedding complete: {done} chunks", "success")
-
-        except ImportError:
             self._ingest_log_append(
-                "ModelManager not available — skipping embedding", "warning")
+                f"\n  DB: {size_mb:.1f} MB | Files: {files} | "
+                f"Chunks: {chunks} | Embedded: {embedded} | "
+                f"Graph: {nodes} nodes, {edges} edges",
+                "accent")
         except Exception as e:
-            self._ingest_log_append(f"Embedding error: {e}", "error")
+            self._log("Ingest", f"Stats error: {e}", "dim")
 
     # ══════════════════════════════════════════════════════════════════════
     #  CURATE
@@ -3306,8 +3281,8 @@ class TripartiteDataStore:
                             f"Export with embeddings will be ~{est_mb:.0f} MB.",
                             destructive=False):
                         return
-            except Exception:
-                pass
+            except Exception as e:
+                self._log("Export", f"Size estimation failed: {e}", "warning")
 
         fmt = self._export_format.get()
         ext_map = {"json": ".json", "csv": ".csv",
@@ -3341,18 +3316,22 @@ class TripartiteDataStore:
                 for r in rows
             ]
 
-            # Chunks
+            # Chunks (join with tree_nodes for name)
             if self._export_chunks.get():
-                rows = self.conn.execute(
-                    "SELECT chunk_id, chunk_type, name, content, file_cid, "
-                    "line_start, line_end, token_count, embed_status, language_tier "
-                    "FROM chunk_manifest").fetchall()
+                rows = self.conn.execute("""
+                    SELECT cm.chunk_id, cm.chunk_type, tn.name,
+                           cm.context_prefix, cm.node_id,
+                           tn.file_cid, tn.line_start, tn.line_end,
+                           cm.token_count, cm.embed_status, cm.language_tier
+                    FROM chunk_manifest cm
+                    LEFT JOIN tree_nodes tn ON tn.chunk_id = cm.chunk_id
+                """).fetchall()
                 data["chunks"] = [
-                    {"chunk_id": r[0], "chunk_type": r[1], "name": r[2],
-                     "content": r[3], "file_cid": r[4],
-                     "line_start": r[5], "line_end": r[6],
-                     "token_count": r[7], "embed_status": r[8],
-                     "language_tier": r[9]}
+                    {"chunk_id": r[0], "chunk_type": r[1], "name": r[2] or "",
+                     "context_prefix": r[3], "node_id": r[4],
+                     "file_cid": r[5], "line_start": r[6], "line_end": r[7],
+                     "token_count": r[8], "embed_status": r[9],
+                     "language_tier": r[10]}
                     for r in rows
                 ]
 
@@ -3360,15 +3339,15 @@ class TripartiteDataStore:
             if self._export_graph.get():
                 try:
                     edges = self.conn.execute(
-                        "SELECT source_id, relation, target_id, weight "
+                        "SELECT src_node_id, edge_type, dst_node_id, weight "
                         "FROM graph_edges").fetchall()
                     data["graph_edges"] = [
-                        {"source_id": r[0], "relation": r[1],
-                         "target_id": r[2], "weight": r[3]}
+                        {"src_node_id": r[0], "edge_type": r[1],
+                         "dst_node_id": r[2], "weight": r[3]}
                         for r in edges
                     ]
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._log("Export", f"Graph export error: {e}", "warning")
 
             # Write output
             if fmt == "json":
@@ -3420,39 +3399,81 @@ class TripartiteDataStore:
     # ══════════════════════════════════════════════════════════════════════
 
     def _open_settings(self):
-        """Open a settings dialog."""
-        win = tk.Toplevel(self.root)
-        win.title("Settings")
-        win.geometry("500x400")
-        win.configure(bg=BG)
-        win.transient(self.root)
-        win.grab_set()
+        """Open the full settings dialog (model picker, lazy mode, etc.)."""
+        try:
+            from .settings_dialog import SettingsDialog
+            dlg = SettingsDialog(self.root)
+            self.root.wait_window(dlg)
 
-        tk.Label(win, text="⚙ Settings", bg=BG, fg=FG,
-                 font=FONT_H).pack(anchor="w", padx=16, pady=(16, 8))
+            # Reload settings after user closes dialog
+            try:
+                from .settings_store import Settings
+                self._settings = Settings.load()
+            except Exception as e:
+                self._log("Settings", f"Settings reload failed: {e}", "warning")
 
-        # DB path
-        db_frame = tk.Frame(win, bg=BG)
-        db_frame.pack(fill="x", padx=16, pady=4)
-        tk.Label(db_frame, text="Database:", bg=BG, fg=FG,
-                 font=FONT_SM).pack(side="left")
-        db_entry = tk.Entry(db_frame, bg=BG2, fg=FG, font=FONT_MONO_SM,
-                            borderwidth=0)
-        db_entry.pack(side="left", fill="x", expand=True, padx=8, ipady=3)
-        if self.db_path:
-            db_entry.insert(0, self.db_path)
+            # Reset model instances so they reload on next use
+            try:
+                from .models import manager
+                manager._embedder_instance = None
+                manager._extractor_instance = None
+                manager._embedder_failed = False
+                manager._extractor_failed = False
+            except Exception as e:
+                self._log("Settings", f"Model cache reset failed: {e}", "warning")
 
-        # Tool dirs
-        tk.Label(win, text="Extra Tool Directories:", bg=BG, fg=FG,
-                 font=FONT_SM).pack(anchor="w", padx=16, pady=(16, 4))
-        tool_text = tk.Text(win, bg=BG2, fg=FG, font=FONT_MONO_SM,
-                            height=4, borderwidth=0)
-        tool_text.pack(fill="x", padx=16, pady=4)
+            self._log("Settings", "Settings saved — models will reload on next run", "dim")
+        except ImportError:
+            # Fallback: basic info dialog if settings_dialog.py not available
+            self._log("Settings", "SettingsDialog not available", "warning")
+            messagebox.showinfo(
+                "Settings",
+                f"Database: {self.db_path or 'none'}\n\n"
+                "Install settings_dialog.py for full model management.")
 
-        # Close
-        tk.Button(win, text="Close", command=win.destroy,
-                  bg=ACCENT2, fg="#ffffff", relief="flat", font=FONT_SM,
-                  padx=20).pack(anchor="e", padx=16, pady=16)
+    def _check_model_mismatch(self) -> bool:
+        """Check if selected embedder matches what's already in the DB.
+
+        Returns True if OK to proceed, False to cancel.
+        """
+        if not self.conn or not self._settings:
+            return True
+        try:
+            rows = self.conn.execute(
+                "SELECT DISTINCT embed_model FROM chunk_manifest "
+                "WHERE embed_model IS NOT NULL"
+            ).fetchall()
+            db_models = {r[0] for r in rows if r[0]}
+            selected = self._settings.embedder_filename
+            if not db_models or selected in db_models:
+                return True
+            return self.hitl.confirm(
+                "Model Mismatch",
+                f"This DB was embedded with: {', '.join(db_models)}\n\n"
+                f"Your current embedder is: {selected}\n\n"
+                "Mixing models makes semantic search unreliable.\n"
+                "Continue anyway?")
+        except Exception as e:
+            self._log("Model", f"Model mismatch check failed: {e}", "warning")
+            return True
+
+    def _prompt_download(self, role: str) -> bool:
+        """Ask user if they want to open Settings to download a missing model."""
+        if not self._settings:
+            return False
+        spec = self._settings.spec_for(role)
+        if not spec:
+            return False
+        answer = messagebox.askyesno(
+            "Model Not Downloaded",
+            f"The selected {role} model is not cached:\n"
+            f"  {spec.get('display_name', spec.get('filename', ''))}\n\n"
+            "Open Settings to download it now?",
+            parent=self.root)
+        if not answer:
+            return False
+        self._open_settings()
+        return self._settings.model_is_cached(role)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
