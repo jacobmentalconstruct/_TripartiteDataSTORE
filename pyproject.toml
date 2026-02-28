@@ -25,6 +25,7 @@ dev = [
 
 [project.scripts]
 tripartite-ingest = "tripartite.cli:main"
+tripartite-gui = "tripartite.datastore:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

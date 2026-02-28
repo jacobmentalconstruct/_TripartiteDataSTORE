@@ -3,7 +3,7 @@ setlocal
 title TripartiteDataSTORE Launcher
 
 echo =============================================
-echo      Launching TripartiteDataSTORE STUDIO
+echo      Launching TripartiteDataSTORE Studio
 echo =============================================
 
 :: 1. Check if the virtual environment exists
@@ -19,8 +19,8 @@ echo [1/2] Activating virtual environment...
 call .venv\Scripts\activate.bat
 
 :: 3. Run the application
-echo [2/2] Starting the Studio...
-python -m tripartite.studio
+echo [2/2] Starting the DataSTORE...
+python -m tripartite.datastore
 
 :: 4. Handle exit
 if %ERRORLEVEL% neq 0 (
