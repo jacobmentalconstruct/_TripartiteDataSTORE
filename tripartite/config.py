@@ -41,17 +41,17 @@ KNOWN_MODELS: list[dict] = [
     },
     {
         "role": "embedder",
-        "filename": "mxbai-embed-large-v1-q4_k_m.gguf",
+        "filename": "mxbai-embed-large-v1.Q4_K_M.gguf",
         "display_name": "MixedBread Embed Large v1 (Q4_K_M)",
-        "description": "Higher quality, 1024-dim. Better for technical docs. ~670 MB.",
+        "description": "Higher quality, 1024-dim. Better for technical docs. ~216 MB.",
         "url": (
-            "https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1-GGUF"
-            "/resolve/main/mxbai-embed-large-v1-q4_k_m.gguf"
+            "https://huggingface.co/ChristianAzinn/mxbai-embed-large-v1-gguf"
+            "/resolve/main/mxbai-embed-large-v1.Q4_K_M.gguf"
         ),
         "sha256": None,
         "dims": 1024,
         "context_length": 512,
-        "min_size_bytes": 500_000_000,
+        "min_size_bytes": 150_000_000,
     },
     {
         "role": "embedder",

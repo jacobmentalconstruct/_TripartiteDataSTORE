@@ -18,6 +18,11 @@ Stages (per the coherent ingestion architecture spec):
 v0.2.0 — Updated _get_chunker to route structured (JSON, YAML, TOML) and
   markup (HTML, CSS) files through tree-sitter for tier-aware chunking,
   not just code files.
+
+v0.3.0 — Added CompoundDocumentChunker integration. Files detected as
+  compound documents (multi-file dumps) are routed through the compound
+  chunker before falling through to prose.  Detection runs in _get_chunker()
+  to keep detect.py fast and extension-based.
 """
 
 from __future__ import annotations
@@ -59,7 +64,8 @@ def _get_chunker(source: SourceFile):
     1. TreeSitterChunker for supported code languages (20+ languages)
     2. TreeSitterChunker for structural/markup files (JSON, YAML, HTML, CSS, etc.)
     3. PythonChunker for .py files (fallback if tree-sitter unavailable)
-    4. ProseChunker for markdown, text, and generic files
+    4. CompoundDocumentChunker for multi-file dumps / concatenated sources
+    5. ProseChunker for markdown, text, and generic files
     """
     from ..chunkers.treesitter import get_treesitter_chunker
 
@@ -82,6 +88,17 @@ def _get_chunker(source: SourceFile):
         if ts_chunker is not None:
             lang = source.language or ext.lstrip(".")
             return ts_chunker, f"treesitter_{lang}_v2"
+
+    # ── v0.3.0: Compound document detection ──────────────────────────────
+    # Check if this is a multi-file dump before falling through to prose.
+    # This runs on prose, generic, and structured files that weren't handled
+    # by tree-sitter above.  The check is lightweight (line scanning, no ML).
+    try:
+        from ..chunkers.compound import CompoundDocumentChunker, is_compound_document
+        if is_compound_document(source):
+            return CompoundDocumentChunker(), "compound_v1"
+    except ImportError:
+        pass  # compound.py not yet installed — skip gracefully
 
     # Default: prose chunker for markdown, text, generic, and unsupported code
     return ProseChunker(), "prose_v1"
@@ -151,7 +168,9 @@ def _ingest_file(
     embed_chunks(conn, chunks, chunk_ids, node_ids, lazy=lazy, on_progress=on_progress)
 
     # ── Stage 8: Entity extraction + graph ───────────────────────────────
-    write_graph(conn, chunks, chunk_ids, node_ids, lazy=lazy)
+    # v0.3.1: Pass on_progress so extraction fires progress events and
+    # the GUI can check the stop flag between chunks.
+    write_graph(conn, chunks, chunk_ids, node_ids, lazy=lazy, on_progress=on_progress)
 
     embedded = sum(1 for c in chunks) if lazy else _count_embedded(conn, chunk_ids)
 

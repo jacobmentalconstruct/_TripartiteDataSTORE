@@ -10,6 +10,10 @@ Stage 7 — Embed:
   Embed (context_prefix + chunk_text) for each chunk.
   Store raw float32 vector blob in the embeddings table.
   Update chunk_manifest.embed_status.
+
+v0.3.1 — CRITICAL FIX: The embed/write/manifest/FTS block was at the wrong
+  indentation level — it sat outside the per-chunk for loop, so only the last
+  chunk in each batch was actually embedded. Now correctly inside the loop.
 """
 
 from __future__ import annotations
@@ -94,57 +98,61 @@ def embed_chunks(
             prefix = make_context_prefix(chunk)
             full_text = f"{prefix}: {chunk.text}" if prefix else chunk.text
 
-        try:
-            vector = safe_embed(embedder, full_text)
+            # ── v0.3.1 FIX: This block was at the wrong indent level ─────
+            # Previously it was OUTSIDE the for loop (8-space indent instead
+            # of 12-space), so only the last chunk per batch got embedded.
+            # Now correctly inside the per-chunk loop.
+            try:
+                vector = safe_embed(embedder, full_text)
 
-            # Pad or truncate to expected dims
-            if len(vector) < dims:
-                vector = vector + [0.0] * (dims - len(vector))
-            else:
-                vector = vector[:dims]
+                # Pad or truncate to expected dims
+                if len(vector) < dims:
+                    vector = vector + [0.0] * (dims - len(vector))
+                else:
+                    vector = vector[:dims]
 
-            # Pack as little-endian float32 blob
-            blob = struct.pack(f"<{dims}f", *vector)
+                # Pack as little-endian float32 blob
+                blob = struct.pack(f"<{dims}f", *vector)
 
-            # Write to embeddings table
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO embeddings (chunk_id, model, dims, vector)
-                VALUES (?, ?, ?, ?)
-                """,
-                (chunk_id, model_name, dims, blob),
-            )
+                # Write to embeddings table
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO embeddings (chunk_id, model, dims, vector)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (chunk_id, model_name, dims, blob),
+                )
 
-            # Update manifest status
-            conn.execute(
-                """
-                UPDATE chunk_manifest
-                SET embed_status = 'done', embed_model = ?, embed_dims = ?
-                WHERE chunk_id = ?
-                """,
-                (model_name, dims, chunk_id),
-            )
+                # Update manifest status
+                conn.execute(
+                    """
+                    UPDATE chunk_manifest
+                    SET embed_status = 'done', embed_model = ?, embed_dims = ?
+                    WHERE chunk_id = ?
+                    """,
+                    (model_name, dims, chunk_id),
+                )
 
-            # FTS insert for the chunk text
-            conn.execute(
-                """
-                INSERT INTO fts_chunks (context_prefix, chunk_text, chunk_id)
-                VALUES (?, ?, ?)
-                """,
-                (prefix, chunk.text, chunk_id),
-            )
+                # FTS insert for the chunk text
+                conn.execute(
+                    """
+                    INSERT INTO fts_chunks (context_prefix, chunk_text, chunk_id)
+                    VALUES (?, ?, ?)
+                    """,
+                    (prefix, chunk.text, chunk_id),
+                )
 
-        except Exception as e:
-            # CRITICAL: Log failures so they don't go silent
-            print(f"[embed] chunk {chunk_id} failed: {e}")
-            conn.execute(
-                """
-                UPDATE chunk_manifest
-                SET embed_status = 'error', embed_error = ?
-                WHERE chunk_id = ?
-                """,
-                (str(e)[:512], chunk_id),
-            )
+            except Exception as e:
+                # CRITICAL: Log failures so they don't go silent
+                print(f"[embed] chunk {chunk_id} failed: {e}")
+                conn.execute(
+                    """
+                    UPDATE chunk_manifest
+                    SET embed_status = 'error', embed_error = ?
+                    WHERE chunk_id = ?
+                    """,
+                    (str(e)[:512], chunk_id),
+                )
 
 
 def _mark_all_pending(conn: sqlite3.Connection, chunk_ids: list[str]) -> None:
@@ -170,4 +178,3 @@ def unpack_vector(blob: bytes) -> list[float]:
     """Unpack a float32 LE blob back to a list of floats."""
     n = len(blob) // 4
     return list(struct.unpack(f"<{n}f", blob))
-

@@ -8,6 +8,10 @@ Uses the GGUF instruction-tuned model (Qwen2.5-0.5B) to extract:
 Writes:
   - graph_nodes records (one per unique entity + one per chunk)
   - graph_edges records (MENTIONS, RELATES_TO, structural edges)
+
+v0.3.1 — Added on_progress callback to write_graph() so the GUI can:
+  1. Show extraction progress (not just "Extractor ready" then silence)
+  2. Check the stop flag between chunks (previously unstoppable)
 """
 
 from __future__ import annotations
@@ -59,6 +63,7 @@ def write_graph(
     chunk_ids: list[str],
     node_ids: list[str],
     lazy: bool = False,
+    on_progress=None,
 ) -> None:
     """
     For each chunk: create a graph node, extract entities, write entity nodes
@@ -68,6 +73,13 @@ def write_graph(
     and don't require the extractor — always written even in lazy mode.
 
     Entity extraction requires the extractor model and is skipped in lazy mode.
+
+    v0.3.1: Added on_progress parameter. Fires extraction_progress events so
+    the GUI can update its progress bar and check the stop flag. Without this,
+    the extraction loop was completely opaque — no progress, no stop, no skip.
+
+    on_progress: optional callable(event: dict) — fired per chunk with:
+        {"type": "extraction_progress", "chunk_idx": i, "chunk_total": n}
     """
     # Create chunk graph nodes first (no model needed)
     chunk_graph_node_ids: list[str] = []
@@ -113,10 +125,29 @@ def write_graph(
     # Entity node cache to deduplicate within this ingest run
     entity_cache: dict[str, str] = {}  # label.lower() → graph_node_id
 
-    for chunk, chunk_id, gnode_id in zip(chunks, chunk_ids, chunk_graph_node_ids):
-        # Skip very short chunks
-        if len(chunk.text.strip()) < 50:
-            continue
+    # ── v0.3.1: Count extractable chunks for progress reporting ──────────
+    extractable = [
+        (chunk, chunk_id, gnode_id)
+        for chunk, chunk_id, gnode_id
+        in zip(chunks, chunk_ids, chunk_graph_node_ids)
+        if len(chunk.text.strip()) >= 50
+    ]
+    total_extractable = len(extractable)
+
+    for ext_idx, (chunk, chunk_id, gnode_id) in enumerate(extractable):
+        # ── v0.3.1: Fire progress so GUI can update + check stop flag ────
+        if on_progress is not None:
+            try:
+                on_progress({
+                    "type": "extraction_progress",
+                    "chunk_idx": ext_idx,
+                    "chunk_total": total_extractable,
+                })
+            except Exception:
+                # If on_progress raises (e.g. _StopIngest), let it propagate.
+                # The bare `except Exception` won't catch BaseException subclasses
+                # like _StopIngest, which is exactly what we want.
+                pass
 
         result = extract_entities(chunk.text, extractor)
 
