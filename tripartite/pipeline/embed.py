@@ -20,7 +20,7 @@ import struct
 from typing import Optional
 
 from ..chunkers.base import Chunk
-from ..config import EMBEDDING_DIMS, EMBEDDING_BATCH, MODELS
+from ..config import EMBEDDING_BATCH
 from ..utils import build_context_prefix
 
 
@@ -44,6 +44,9 @@ def embed_chunks(
     """
     Embed all chunks and write results to the embeddings table.
 
+    Reads dims and model_name dynamically from the selected embedder spec
+    so switching models in Settings Just Works™.
+
     on_progress: optional callable(event: dict) — fired per chunk with:
         {"type": "embedding_progress", "chunk_idx": i, "chunk_total": n, "filename": str}
     """
@@ -52,7 +55,7 @@ def embed_chunks(
         return
 
     try:
-        from ..models.manager import get_embedder
+        from ..models.manager import get_embedder, safe_embed, get_active_embedder_spec
         embedder = get_embedder()
         if embedder is None:
             _mark_all_pending(conn, chunk_ids)
@@ -63,8 +66,10 @@ def embed_chunks(
         _mark_all_pending(conn, chunk_ids)
         return
 
-    model_name = MODELS["embedder"]["filename"]
-    dims = EMBEDDING_DIMS
+    # Read dims and model_name from the active embedder spec (not hardcoded)
+    spec = get_active_embedder_spec()
+    model_name = spec["filename"]
+    dims = spec["dims"]
     total = len(chunks)
 
     # Process in batches to keep memory manageable
@@ -89,62 +94,57 @@ def embed_chunks(
             prefix = make_context_prefix(chunk)
             full_text = f"{prefix}: {chunk.text}" if prefix else chunk.text
 
-            try:
-                result = embedder.embed(full_text)
-                # llama-cpp-python returns list[float] or list[list[float]]
-                if result and isinstance(result[0], list):
-                    vector = result[0]
-                else:
-                    vector = result
+        try:
+            vector = safe_embed(embedder, full_text)
 
-                # Pad or truncate to expected dims
-                if len(vector) < dims:
-                    vector = vector + [0.0] * (dims - len(vector))
-                else:
-                    vector = vector[:dims]
+            # Pad or truncate to expected dims
+            if len(vector) < dims:
+                vector = vector + [0.0] * (dims - len(vector))
+            else:
+                vector = vector[:dims]
 
-                # Pack as little-endian float32 blob
-                blob = struct.pack(f"<{dims}f", *vector)
+            # Pack as little-endian float32 blob
+            blob = struct.pack(f"<{dims}f", *vector)
 
-                # Write to embeddings table
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO embeddings (chunk_id, model, dims, vector)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (chunk_id, model_name, dims, blob),
-                )
+            # Write to embeddings table
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO embeddings (chunk_id, model, dims, vector)
+                VALUES (?, ?, ?, ?)
+                """,
+                (chunk_id, model_name, dims, blob),
+            )
 
-                # Update manifest status
-                conn.execute(
-                    """
-                    UPDATE chunk_manifest
-                    SET embed_status = 'done', embed_model = ?, embed_dims = ?
-                    WHERE chunk_id = ?
-                    """,
-                    (model_name, dims, chunk_id),
-                )
+            # Update manifest status
+            conn.execute(
+                """
+                UPDATE chunk_manifest
+                SET embed_status = 'done', embed_model = ?, embed_dims = ?
+                WHERE chunk_id = ?
+                """,
+                (model_name, dims, chunk_id),
+            )
 
-                # FTS insert for the chunk text
-                conn.execute(
-                    """
-                    INSERT INTO fts_chunks (context_prefix, chunk_text, chunk_id)
-                    VALUES (?, ?, ?)
-                    """,
-                    (prefix, chunk.text, chunk_id),
-                )
+            # FTS insert for the chunk text
+            conn.execute(
+                """
+                INSERT INTO fts_chunks (context_prefix, chunk_text, chunk_id)
+                VALUES (?, ?, ?)
+                """,
+                (prefix, chunk.text, chunk_id),
+            )
 
-            except Exception as e:
-                # CRITICAL: Log failures so they don't go silent
-                print(f"[embed] chunk {chunk_id} failed: {e}")
-                conn.execute(
-                    """
-                    UPDATE chunk_manifest
-                    SET embed_status = 'error', embed_error = ?
-                    WHERE chunk_id = ?
-                    """,
-                    (str(e)[:512], chunk_id),
-                )
+        except Exception as e:
+            # CRITICAL: Log failures so they don't go silent
+            print(f"[embed] chunk {chunk_id} failed: {e}")
+            conn.execute(
+                """
+                UPDATE chunk_manifest
+                SET embed_status = 'error', embed_error = ?
+                WHERE chunk_id = ?
+                """,
+                (str(e)[:512], chunk_id),
+            )
 
 
 def _mark_all_pending(conn: sqlite3.Connection, chunk_ids: list[str]) -> None:
@@ -170,3 +170,4 @@ def unpack_vector(blob: bytes) -> list[float]:
     """Unpack a float32 LE blob back to a list of floats."""
     n = len(blob) // 4
     return list(struct.unpack(f"<{n}f", blob))
+

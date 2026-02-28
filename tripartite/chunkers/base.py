@@ -3,6 +3,11 @@ Base chunker interface and shared Chunk dataclass.
 
 All chunkers receive a SourceFile and return a list of Chunk objects.
 The pipeline then writes these to the logical tree and chunk manifest.
+
+v0.2.0 — Added language-tier-aware hierarchy fields:
+  semantic_depth   : meaningful depth in code hierarchy (0 for structural)
+  structural_depth : raw AST / nesting depth
+  language_tier    : deep_semantic | shallow_semantic | structural | hybrid | unknown
 """
 
 from __future__ import annotations
@@ -54,6 +59,17 @@ class Chunk:
     heading_path: list[str] = field(default_factory=list)
     parent_chunk_idx: Optional[int] = None   # index into sibling list, or None
     depth: int = 0
+
+    # ── Language-tier hierarchy (v0.2.0) ──────────────────────────────────
+    # semantic_depth  — meaningful nesting in code hierarchy.
+    #                   For deep_semantic langs: matches depth (module→class→method→nested).
+    #                   For shallow_semantic: capped at 1 (module→function).
+    #                   For structural/hybrid: always 0 (depth exists but isn't semantic).
+    # structural_depth — raw AST / nesting depth regardless of semantic meaning.
+    # language_tier    — classification of the source language's hierarchy style.
+    semantic_depth: int = 0
+    structural_depth: int = 0
+    language_tier: str = "unknown"
 
     # Overlap (filled by chunker after all siblings are known)
     prev_chunk_idx: Optional[int] = None

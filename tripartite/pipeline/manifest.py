@@ -7,6 +7,10 @@ that ties together the verbatim layer, semantic layer, and graph layer.
 This is the last step of the pipeline for each file.  By the time this
 runs, all other stages have completed and the chunk_id, node_id, and
 graph references are all known.
+
+v0.2.0 — Now writes semantic_depth, structural_depth, language_tier as
+  proper SQL columns AND includes them in the hierarchy JSON blob for
+  backward compatibility with older viewer code.
 """
 
 from __future__ import annotations
@@ -41,7 +45,7 @@ def write_manifest(
     ):
         context_prefix = build_context_prefix(chunk.heading_path)
 
-        # Hierarchy JSON
+        # Hierarchy JSON — includes tier fields for backward compat
         parent_chunk_id = (
             idx_to_chunk_id.get(chunk.parent_chunk_idx)
             if chunk.parent_chunk_idx is not None
@@ -51,6 +55,10 @@ def write_manifest(
             "parent_chunk_id": parent_chunk_id,
             "heading_path": chunk.heading_path,
             "depth": chunk.depth,
+            # v0.2.0: redundant in JSON for backward compat
+            "semantic_depth": chunk.semantic_depth,
+            "structural_depth": chunk.structural_depth,
+            "language_tier": chunk.language_tier,
         }
 
         # Overlap JSON
@@ -82,8 +90,10 @@ def write_manifest(
             """
             INSERT OR REPLACE INTO chunk_manifest
               (chunk_id, node_id, chunk_type, context_prefix, token_count,
-               spans, hierarchy, overlap, chunker, pipeline_ver)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               spans, hierarchy, overlap,
+               semantic_depth, structural_depth, language_tier,
+               chunker, pipeline_ver)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 chunk_id,
@@ -94,6 +104,9 @@ def write_manifest(
                 json.dumps(spans),
                 json.dumps(hierarchy),
                 json.dumps(overlap),
+                chunk.semantic_depth,
+                chunk.structural_depth,
+                chunk.language_tier,
                 chunker_name,
                 PIPELINE_VERSION,
             ),

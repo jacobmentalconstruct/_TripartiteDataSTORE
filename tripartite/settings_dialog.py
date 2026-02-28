@@ -14,6 +14,11 @@ Each model row shows:
   • File size on disk (if cached)
   • "Download" button — opens inline log and streams download progress
 
+Footer buttons:
+  • Apply   — save settings to disk, stay open (shows confirmation flash)
+  • Cancel  — discard any changes and close
+  • X close — same as Cancel (prompts if unsaved changes)
+
 Model mismatch detection:
   Call settings_dialog.warn_if_mismatch(db_path, parent) before an ingest run
   to alert the user if the selected embedder differs from what the DB was built with.
@@ -83,26 +88,38 @@ def warn_if_mismatch(db_path: Path, parent: tk.Misc) -> bool:
 
 
 class SettingsDialog(tk.Toplevel):
-    """Modal settings window."""
+    """Modal settings window with Apply / Cancel buttons."""
 
     def __init__(self, parent: tk.Misc):
         super().__init__(parent)
         self.title("Settings")
         self.configure(bg=BG)
-        self.resizable(False, False)
         self.grab_set()  # modal
+
+        # Allow vertical resize so the user can grow the window if needed
+        self.resizable(False, True)
+        self.minsize(620, 660)
 
         self._settings = Settings.load()
         self._log_queue: queue.Queue = queue.Queue()
         self._downloading = False
+        self._dirty = False  # tracks unsaved changes
+
+        # Snapshot the original values so Cancel can truly discard
+        self._original_embedder = self._settings.embedder_filename
+        self._original_extractor = self._settings.extractor_filename
+        self._original_lazy = self._settings.lazy_mode
 
         self._build_ui()
         self._refresh_cache_status()
         self._poll_log()
 
+        # Handle the X close button — same as Cancel (with prompt if dirty)
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+
         # Centre over parent
         self.update_idletasks()
-        w, h = 620, 600  # Increased height to accommodate Diagnostics section
+        w, h = 620, 680
         px = parent.winfo_rootx() + (parent.winfo_width()  - w) // 2
         py = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
         self.geometry(f"{w}x{h}+{px}+{py}")
@@ -110,12 +127,61 @@ class SettingsDialog(tk.Toplevel):
     # ── UI construction ───────────────────────────────────────────────────────
 
     def _build_ui(self):
-        # Header
+        # ══════════════════════════════════════════════════════════════════════
+        # PACK ORDER MATTERS.  In tkinter's pack manager, widgets packed first
+        # claim space first.  We pack in this order:
+        #   1. Header   (top, fixed height)
+        #   2. Footer   (bottom, fixed height) ← MUST come before body
+        #   3. Body     (fill remaining space, expand=True)
+        # This guarantees the Apply/Cancel buttons are always visible even if
+        # the body content is tall.
+        # ══════════════════════════════════════════════════════════════════════
+
+        # ── 1. Header (top) ───────────────────────────────────────────────────
         hdr = tk.Frame(self, bg=BG2, pady=10)
-        hdr.pack(fill="x")
+        hdr.pack(fill="x", side="top")
         tk.Label(hdr, text="⚙  Settings", bg=BG2, fg=ACCENT,
                  font=("Segoe UI Semibold", 13)).pack(side="left", padx=16)
 
+        # ── 2. Footer with buttons (bottom, packed BEFORE body) ───────────────
+        foot = tk.Frame(self, bg=BG2, pady=8)
+        foot.pack(fill="x", side="bottom")
+
+        # Thin separator line at top of footer
+        tk.Frame(foot, bg="#3a3a5e", height=1).pack(fill="x", side="top")
+
+        # Button row
+        btn_row = tk.Frame(foot, bg=BG2)
+        btn_row.pack(fill="x", padx=12, pady=(6, 2))
+
+        # Status feedback label (shows "Settings applied ✓" flash) — left side
+        self._status_msg = tk.StringVar(value="")
+        self._status_label = tk.Label(
+            btn_row, textvariable=self._status_msg,
+            bg=BG2, fg=SUCCESS, font=FONT_SM,
+        )
+        self._status_label.pack(side="left")
+
+        # Cancel — right side
+        tk.Button(btn_row, text="Cancel",
+                  command=self._on_cancel,
+                  bg=BG2, fg=FG_DIM, relief="flat",
+                  font=FONT_UI, cursor="hand2", padx=12, pady=5,
+                  activebackground=BG,
+                  ).pack(side="right", padx=(4, 0))
+
+        # Apply — right side, next to Cancel
+        self._apply_btn = tk.Button(
+            btn_row, text="✓  Apply",
+            command=self._on_apply,
+            bg=ACCENT2, fg=BG, relief="flat",
+            font=("Segoe UI Semibold", 10),
+            cursor="hand2", padx=16, pady=5,
+            activebackground="#4dcfb3",
+        )
+        self._apply_btn.pack(side="right", padx=(0, 4))
+
+        # ── 3. Body (fills remaining space between header and footer) ─────────
         body = tk.Frame(self, bg=BG)
         body.pack(fill="both", expand=True, padx=18, pady=12)
 
@@ -151,6 +217,7 @@ class SettingsDialog(tk.Toplevel):
                  font=FONT_SM).pack(anchor="w", pady=(0, 6))
 
         self.lazy_var = tk.BooleanVar(value=self._settings.lazy_mode)
+        self.lazy_var.trace_add("write", lambda *_: self._mark_dirty())
         tk.Checkbutton(
             diag_section,
             text="Lazy mode  (structural pass only — skips embedding and entity extraction)",
@@ -172,32 +239,13 @@ class SettingsDialog(tk.Toplevel):
                  font=FONT_SM).pack(anchor="w")
         self._log_widget = scrolledtext.ScrolledText(
             body, bg=BG3, fg=FG, font=FONT_MONO,
-            height=7, relief="flat", state="disabled", wrap="word",
+            height=6, relief="flat", state="disabled", wrap="word",
         )
-        self._log_widget.pack(fill="x", pady=(4, 0))
+        self._log_widget.pack(fill="both", expand=True, pady=(4, 0))
         self._log_widget.tag_config("ok",   foreground=SUCCESS)
         self._log_widget.tag_config("warn", foreground=WARNING)
         self._log_widget.tag_config("err",  foreground=ERROR)
         self._log_widget.tag_config("dim",  foreground=FG_DIM)
-
-        # ── Footer buttons ────────────────────────────────────────────────────
-        foot = tk.Frame(self, bg=BG2, pady=8)
-        foot.pack(fill="x", side="bottom")
-
-        tk.Button(foot, text="✓  Save & Close",
-                  command=self._save_and_close,
-                  bg=ACCENT2, fg=BG, relief="flat",
-                  font=("Segoe UI Semibold", 10),
-                  cursor="hand2", padx=16, pady=5,
-                  activebackground="#4dcfb3",
-                  ).pack(side="right", padx=12)
-
-        tk.Button(foot, text="Cancel",
-                  command=self.destroy,
-                  bg=BG2, fg=FG_DIM, relief="flat",
-                  font=FONT_UI, cursor="hand2", padx=12, pady=5,
-                  activebackground=BG,
-                  ).pack(side="right", padx=(0, 4))
 
     def _model_section(self, parent, role: str, label: str, subtitle: str, attr: str):
         """Build one model-selection section (embedder or extractor)."""
@@ -242,13 +290,14 @@ class SettingsDialog(tk.Toplevel):
                            activebackground="#3a3a5e")
         dl_btn.pack(side="left", padx=(12, 0))
 
-        # Wire combo change → update description + status
+        # Wire combo change → update description + status + mark dirty
         def on_combo_change(*_):
             name = combo_var.get()
             spec = next(m for m in models if m["display_name"] == name)
             desc_var.set(spec["description"])
             setattr(self._settings, attr, spec["filename"])
             self._update_status(spec, status_var, status_lbl, dl_btn)
+            self._mark_dirty()
 
         combo.bind("<<ComboboxSelected>>", on_combo_change)
 
@@ -267,6 +316,14 @@ class SettingsDialog(tk.Toplevel):
 
         # Initial status
         self._update_status(models[current_idx], status_var, status_lbl, dl_btn)
+
+    # ── Dirty tracking ────────────────────────────────────────────────────────
+
+    def _mark_dirty(self):
+        """Flag that the user has made changes that haven't been applied yet."""
+        self._dirty = True
+        # Clear any "applied" feedback since something changed again
+        self._status_msg.set("")
 
     # ── Cache status ──────────────────────────────────────────────────────────
 
@@ -372,10 +429,44 @@ class SettingsDialog(tk.Toplevel):
             pass
         self.after(60, self._poll_log)
 
-    # ── Save ──────────────────────────────────────────────────────────────────
+    # ── Apply / Cancel / Close ────────────────────────────────────────────────
 
-    def _save_and_close(self):
-        # Save lazy_mode state to settings
+    def _on_apply(self):
+        """Save all current settings to disk and show confirmation."""
         self._settings.lazy_mode = self.lazy_var.get()
         self._settings.save()
+        self._dirty = False
+
+        # Update snapshots so Cancel after Apply doesn't revert the applied state
+        self._original_embedder = self._settings.embedder_filename
+        self._original_extractor = self._settings.extractor_filename
+        self._original_lazy = self._settings.lazy_mode
+
+        # Visual confirmation flash
+        self._status_msg.set("✓  Settings applied")
+        self._status_label.configure(fg=SUCCESS)
+        # Fade the message after 3 seconds
+        self.after(3000, lambda: self._status_msg.set(""))
+
+        self._log("Settings saved.", "ok")
+
+    def _on_cancel(self):
+        """Discard unsaved changes and close."""
+        if self._dirty:
+            answer = messagebox.askyesno(
+                "Unsaved changes",
+                "You have unsaved changes.\n\n"
+                "Discard changes and close?",
+                icon="question",
+                parent=self,
+            )
+            if not answer:
+                return
+
+        # Revert in-memory settings to the original values
+        # (in case something else reads self._settings before gui.py reloads)
+        self._settings.embedder_filename = self._original_embedder
+        self._settings.extractor_filename = self._original_extractor
+        self._settings.lazy_mode = self._original_lazy
+
         self.destroy()

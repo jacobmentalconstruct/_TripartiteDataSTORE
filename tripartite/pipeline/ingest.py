@@ -14,6 +14,10 @@ Stages (per the coherent ingestion architecture spec):
   7. Embed
   8. Entity extraction → graph write
   9. Manifest write
+
+v0.2.0 — Updated _get_chunker to route structured (JSON, YAML, TOML) and
+  markup (HTML, CSS) files through tree-sitter for tier-aware chunking,
+  not just code files.
 """
 
 from __future__ import annotations
@@ -36,32 +40,49 @@ from ..pipeline.verbatim import build_tree, write_source_file, write_verbatim
 from ..utils import stable_uuid
 
 
+# ── Extensions that tree-sitter can handle beyond "code" ──────────────────────
+# These are classified as "structured" or "generic" by detect.py but
+# tree-sitter has grammars for them and our tier system knows how to chunk them.
+_TREESITTER_EXTRA_EXTENSIONS = {
+    ".json", ".yaml", ".yml", ".toml",         # structural tier
+    ".html", ".htm", ".css", ".xml",           # hybrid tier
+}
+
+
 # ── Chunker registry ───────────────────────────────────────────────────────────
 
 def _get_chunker(source: SourceFile):
     """
     Return the appropriate chunker for a source file.
-    
+
     Priority:
     1. TreeSitterChunker for supported code languages (20+ languages)
-    2. PythonChunker for .py files (fallback if tree-sitter unavailable)
-    3. ProseChunker for markdown, text, and generic files
+    2. TreeSitterChunker for structural/markup files (JSON, YAML, HTML, CSS, etc.)
+    3. PythonChunker for .py files (fallback if tree-sitter unavailable)
+    4. ProseChunker for markdown, text, and generic files
     """
     from ..chunkers.treesitter import get_treesitter_chunker
-    
-    # Try tree-sitter first for all code files
+
+    ext = source.path.suffix.lower()
+
+    # Try tree-sitter for code files
     if source.source_type == "code":
         ts_chunker = get_treesitter_chunker(source)
         if ts_chunker is not None:
-            # Determine version string from language
-            ext = source.path.suffix.lower()
             lang = source.language or ext.lstrip(".")
-            return ts_chunker, f"treesitter_{lang}_v1"
-        
+            return ts_chunker, f"treesitter_{lang}_v2"
+
         # Fallback to Python AST chunker for .py files if tree-sitter unavailable
         if source.language == "python":
             return PythonChunker(), "ast_python_v1"
-    
+
+    # Try tree-sitter for structured and markup files
+    if ext in _TREESITTER_EXTRA_EXTENSIONS:
+        ts_chunker = get_treesitter_chunker(source)
+        if ts_chunker is not None:
+            lang = source.language or ext.lstrip(".")
+            return ts_chunker, f"treesitter_{lang}_v2"
+
     # Default: prose chunker for markdown, text, generic, and unsupported code
     return ProseChunker(), "prose_v1"
 

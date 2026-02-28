@@ -8,6 +8,9 @@ Stage 3 — Verbatim write:
 Stage 4 — Logical tree:
   Create tree_node records for the source file and each chunk.
   Assign stable UUIDs. Wire parent/child relationships.
+
+v0.2.0 — tree_nodes now carry language_tier from the chunk metadata,
+  enabling the explorer/viewer to render tier-appropriate tree structures.
 """
 
 from __future__ import annotations
@@ -108,6 +111,10 @@ def build_tree(
     """
     Create tree_node records for a source file and all its chunks.
 
+    v0.2.0: Also writes language_tier to each tree_node so the explorer
+    view can render tier-appropriate hierarchies (file trees for code,
+    section lists for config, DOM outlines for markup, etc.).
+
     Returns:
         (file_node_id, [chunk_node_id, ...])
         where the list is parallel to *chunks*.
@@ -119,12 +126,16 @@ def build_tree(
     # Determine parent: root node of the DB (or provided root)
     parent_id = root_node_id  # None = top-level
 
+    # Derive the file-level tier from the first chunk (all chunks in a
+    # file share the same tier since they come from the same language).
+    file_tier = chunks[0].language_tier if chunks else "unknown"
+
     conn.execute(
         """
         INSERT OR REPLACE INTO tree_nodes
           (node_id, node_type, name, parent_id, path, depth,
-           file_cid, line_start, line_end)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           file_cid, line_start, line_end, language_tier)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             file_node_id,
@@ -136,6 +147,7 @@ def build_tree(
             source.file_cid,
             0,
             len(source.lines) - 1,
+            file_tier,
         ),
     )
 
@@ -153,8 +165,8 @@ def build_tree(
             """
             INSERT OR REPLACE INTO tree_nodes
               (node_id, node_type, name, parent_id, path, depth,
-               file_cid, line_start, line_end)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               file_cid, line_start, line_end, language_tier)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 node_id,
@@ -166,6 +178,7 @@ def build_tree(
                 source.file_cid,
                 chunk.line_start,
                 chunk.line_end,
+                chunk.language_tier,
             ),
         )
 
