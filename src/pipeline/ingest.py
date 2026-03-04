@@ -124,6 +124,7 @@ def _ingest_file(
     source: SourceFile,
     lazy: bool = False,
     verbose: bool = False,
+    very_verbose: bool = False,
     on_chunk=None,
     on_progress=None,
 ) -> tuple[int, int]:
@@ -145,13 +146,20 @@ def _ingest_file(
                 pass
 
     # ── Stage 2+3: Structural parse + chunk ──────────────────────────────
+    if very_verbose:
+        print(f"      [detect] Analyzing {source.path.name}... ({source.source_type})")
     chunker, chunker_name = _get_chunker(source)
+    if very_verbose:
+        print(f"      [chunk] Using {chunker_name}, chunking content...")
     chunks = chunker.chunk(source)
 
     if not chunks:
         if verbose:
             print(f"    → 0 chunks (skipped)", flush=True)
         return 0, 0
+
+    if very_verbose:
+        print(f"      [chunk] Generated {len(chunks)} chunks", flush=True)
 
     _progress({"type": "chunk_progress", "chunk_idx": 0, "chunk_total": len(chunks),
                "filename": source.path.name})
@@ -211,22 +219,34 @@ def ingest(
     db_path: Path,
     lazy: bool = False,
     verbose: bool = True,
+    very_verbose: bool = False,
     on_chunk=None,
     on_progress=None,
 ) -> dict:
     """
     Ingest all eligible files under *source_root* into the database at *db_path*.
 
-    on_progress: optional callable(event: dict) fired at key pipeline moments.
-      Event types:
-        {"type": "file_start",  "file_idx": int, "file_total": int, "filename": str}
-        {"type": "file_done",   "file_idx": int, "file_total": int}
-        {"type": "chunk_progress", "chunk_idx": int, "chunk_total": int, "filename": str}
-        {"type": "embedding_progress", "chunk_idx": int, "chunk_total": int}
+    Args:
+        source_root: Root directory to ingest
+        db_path: Path to SQLite database
+        lazy: Skip embedding (for testing)
+        verbose: Show high-level progress (file count, totals)
+        very_verbose: Show detailed per-stage timing and progress
+        on_chunk: optional callable(source, chunk, chunk_id, index, total)
+        on_progress: optional callable(event: dict) fired at key pipeline moments.
+          Event types:
+            {"type": "file_start",  "file_idx": int, "file_total": int, "filename": str}
+            {"type": "file_done",   "file_idx": int, "file_total": int}
+            {"type": "chunk_progress", "chunk_idx": int, "chunk_total": int, "filename": str}
+            {"type": "embedding_progress", "chunk_idx": int, "chunk_total": int}
     """
     conn = open_db(db_path)
     run_id = stable_uuid()
     started = time.time()
+
+    # Track per-stage timings for detailed reporting
+    stage_timings = {}
+    stage_start = {}
 
     # Get embedding model and dimensions for this ingest run
     try:
@@ -259,13 +279,18 @@ def ingest(
     callback_errors: list[str] = []
     current_dir = None
 
+    _stage_timing("discovery", "start")
     candidate_paths = list(walk_source(source_root))
     total = len(candidate_paths)
     files_discovered = total
+    _stage_timing("discovery", "complete")
 
     if verbose:
         mode = "lazy (no embedding)" if lazy else "full"
         print(f"\n[ingest] {total} file(s) found — mode: {mode}")
+        if very_verbose:
+            disc_time = stage_timings.get("discovery", 0)
+            print(f"[ingest] Discovery time: {disc_time}s")
         print(f"[ingest] Output: {db_path}\n")
 
     # Update ingest_runs with discovered file count
@@ -281,12 +306,31 @@ def ingest(
             try:
                 on_progress(event)
             except Exception as e:
-                # Log callback error instead of silently suppressing
-                err_msg = f"Progress callback error: {type(e).__name__}: {e}"
+                # Log callback error with context instead of silently suppressing
+                stage = event.get("stage", "unknown")
+                stage_context = f" [{stage} stage]" if "stage" in event else ""
+                err_msg = f"Progress callback error{stage_context}: {type(e).__name__}: {e}"
                 callback_errors.append(err_msg)
                 if verbose:
                     print(f"[ingest] {err_msg}")
                 # Continue execution — don't re-raise
+
+    def _stage_timing(stage_name: str, phase: str = "start"):
+        """Track stage timing for detailed reporting."""
+        nonlocal stage_start
+        if phase == "start":
+            stage_start[stage_name] = time.time()
+            if very_verbose:
+                print(f"    [stage] Starting {stage_name}...", flush=True)
+        elif phase == "complete":
+            if stage_name in stage_start:
+                elapsed = time.time() - stage_start[stage_name]
+                stage_timings[stage_name] = round(elapsed, 3)
+                if very_verbose:
+                    print(f"    [stage] {stage_name} complete in {elapsed:.3f}s", flush=True)
+
+    # Start overall processing timer
+    _stage_timing("processing", "start")
 
     for idx, path in enumerate(candidate_paths, 1):
         # Show subdirectory changes for visibility into traversal
@@ -316,7 +360,7 @@ def ingest(
         try:
             with conn:
                 fc, fe = _ingest_file(
-                    conn, source, lazy=lazy, verbose=verbose,
+                    conn, source, lazy=lazy, verbose=verbose, very_verbose=very_verbose,
                     on_chunk=on_chunk, on_progress=on_progress,
                 )
                 files_processed += 1
@@ -331,6 +375,7 @@ def ingest(
 
         _progress({"type": "file_done", "file_idx": idx, "file_total": total})
 
+    _stage_timing("processing", "complete")
     elapsed = time.time() - started
 
     # Get final counts from database for cartridge_manifest
@@ -441,6 +486,7 @@ def ingest(
         "errors": errors,
         "callback_errors": callback_errors,
         "elapsed_seconds": round(elapsed, 2),
+        "stage_timings": stage_timings,
     }
 
     if verbose:
@@ -465,6 +511,13 @@ def _print_summary(s: dict) -> None:
     print(f"  Deployment      : {deployable_str}")
     print(f"  Time            : {s['elapsed_seconds']}s")
     print(f"  Output          : {s['db_path']}")
+
+    # Show per-stage timings if available
+    if s.get("stage_timings"):
+        print("\n  Stage Timings:")
+        for stage, elapsed in sorted(s["stage_timings"].items()):
+            print(f"    {stage:15} : {elapsed:8.3f}s")
+
     if s["errors"]:
         print(f"\n  ⚠ {len(s['errors'])} ingestion error(s):")
         for e in s["errors"]:
