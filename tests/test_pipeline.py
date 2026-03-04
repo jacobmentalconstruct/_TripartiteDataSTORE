@@ -13,10 +13,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tripartite.db.schema import open_db
-from tripartite.pipeline.detect import detect, walk_source
-from tripartite.pipeline.ingest import ingest
-from tripartite.utils import cid, chunk_cid, estimate_tokens, split_lines
+from src.db.schema import open_db
+from src.pipeline.detect import detect, walk_source
+from src.pipeline.ingest import ingest
+from src.utils import cid, chunk_cid, estimate_tokens, split_lines
 
 
 PYTHON_SRC = textwrap.dedent("""\
@@ -202,22 +202,22 @@ class TestPythonChunker(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_produces_multiple_chunks(self):
-        from tripartite.chunkers.code import PythonChunker
+        from src.chunkers.code import PythonChunker
         chunks = PythonChunker().chunk(self.source)
         self.assertGreater(len(chunks), 2)
 
     def test_has_function_def_chunks(self):
-        from tripartite.chunkers.code import PythonChunker
+        from src.chunkers.code import PythonChunker
         types = {c.chunk_type for c in PythonChunker().chunk(self.source)}
         self.assertIn("function_def", types)
 
     def test_all_chunks_have_text(self):
-        from tripartite.chunkers.code import PythonChunker
+        from src.chunkers.code import PythonChunker
         for chunk in PythonChunker().chunk(self.source):
             self.assertTrue(chunk.text.strip(), f"Empty chunk: {chunk.name}")
 
     def test_sibling_links_wired(self):
-        from tripartite.chunkers.code import PythonChunker
+        from src.chunkers.code import PythonChunker
         chunks = PythonChunker().chunk(self.source)
         self.assertTrue(any(c.next_chunk_idx is not None for c in chunks))
 
@@ -231,21 +231,21 @@ class TestProseChunker(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_markdown_split_on_headings(self):
-        from tripartite.chunkers.prose import ProseChunker
+        from src.chunkers.prose import ProseChunker
         p = self.tmp / "README.md"
         p.write_text(MARKDOWN_SRC)
         chunks = ProseChunker().chunk(detect(p))
         self.assertGreater(len(chunks), 2)
 
     def test_first_chunk_is_summary(self):
-        from tripartite.chunkers.prose import ProseChunker
+        from src.chunkers.prose import ProseChunker
         p = self.tmp / "README.md"
         p.write_text(MARKDOWN_SRC)
         chunks = ProseChunker().chunk(detect(p))
         self.assertEqual(chunks[0].chunk_type, "document_summary")
 
     def test_plain_text_splits_on_paragraphs(self):
-        from tripartite.chunkers.prose import ProseChunker
+        from src.chunkers.prose import ProseChunker
         p = self.tmp / "notes.txt"
         p.write_text(TEXT_SRC)
         chunks = ProseChunker().chunk(detect(p))

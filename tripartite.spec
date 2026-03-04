@@ -20,45 +20,45 @@ block_cipher = None
 # ── Analysis ───────────────────────────────────────────────────────────────────
 
 a = Analysis(
-    ['tripartite/gui.py'],  # Entry point
+    ['src/gui.py'],  # Entry point
     pathex=[],
     binaries=[],
     datas=[
         # Include all Python modules
-        ('tripartite', 'tripartite'),
+        ('src', 'src'),
     ],
     hiddenimports=[
         # Core imports
-        'tripartite.gui',
-        'tripartite.viewer',
-        'tripartite.export',
-        'tripartite.export_cli',
-        'tripartite.settings_store',
-        'tripartite.settings_dialog',
-        'tripartite.model_profiles',
-        'tripartite.config',
-        'tripartite.utils',
-        
+        'src.gui',
+        'src.viewer',
+        'src.export',
+        'src.export_cli',
+        'src.settings_store',
+        'src.settings_dialog',
+        'src.model_profiles',
+        'src.config',
+        'src.utils',
+
         # Database
-        'tripartite.db.query',
-        'tripartite.db.schema',
-        
+        'src.db.query',
+        'src.db.schema',
+
         # Models
-        'tripartite.models.manager',
-        
+        'src.models.manager',
+
         # Pipeline
-        'tripartite.pipeline.detect',
-        'tripartite.pipeline.embed',
-        'tripartite.pipeline.extract',
-        'tripartite.pipeline.ingest',
-        'tripartite.pipeline.chunk_tree',
-        'tripartite.pipeline.graph',
-        
+        'src.pipeline.detect',
+        'src.pipeline.embed',
+        'src.pipeline.extract',
+        'src.pipeline.ingest',
+        'src.pipeline.chunk_tree',
+        'src.pipeline.graph',
+
         # Chunkers
-        'tripartite.chunkers.base',
-        'tripartite.chunkers.code',
-        'tripartite.chunkers.prose',
-        'tripartite.chunkers.structured',
+        'src.chunkers.base',
+        'src.chunkers.code',
+        'src.chunkers.prose',
+        'src.chunkers.structured',
         
         # Third-party
         'llama_cpp',

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git mv tripartite src)",
+      "Bash(tasklist /fi \"imagename eq git.exe\")",
+      "Bash(powershell -Command \"Get-Process | Where-Object { $_Name -like ''*git*'' -or $_Name -like ''*claude*'' }\")",
+      "Bash(powershell -Command \"Remove-Item ''C:\\\\Users\\\\jacob\\\\Documents\\\\_UsefulDataCurationTools\\\\_TripartiteDataSTORE\\\\.git\\\\index.lock'' -Force\")",
+      "Bash(git mv curate_tools src/curate_tools)",
+      "Bash(ls -la /c/Users/jacob/Documents/_UsefulDataCurationTools/_TripartiteDataSTORE/*.py)"
+    ]
+  }
+}

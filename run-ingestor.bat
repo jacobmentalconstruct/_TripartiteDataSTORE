@@ -20,7 +20,7 @@ call .venv\Scripts\activate.bat
 
 :: 3. Run the application
 echo [2/2] Starting GUI...
-python -m tripartite.gui
+python -m src.app
 
 :: 4. Handle exit
 if %ERRORLEVEL% neq 0 (

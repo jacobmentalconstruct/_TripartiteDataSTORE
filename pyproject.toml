@@ -24,12 +24,12 @@ dev = [
 ]
 
 [project.scripts]
-tripartite-ingest = "tripartite.cli:main"
-tripartite-gui = "tripartite.datastore:main"
+tripartite-ingest = "src.cli:main"
+tripartite-gui = "src.datastore:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["tripartite*"]
+include = ["src*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

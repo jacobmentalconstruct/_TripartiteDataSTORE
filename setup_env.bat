@@ -96,10 +96,10 @@ echo  1. Activate the environment:
 echo     .venv\Scripts\activate
 echo.
 echo  2. Run the CLI:
-echo     python -m tripartite.cli ingest /path/to/source --db mydata.db
+echo     python -m src.cli ingest /path/to/source --db mydata.db
 echo.
 echo  3. Or launch the viewer:
-echo     python -m tripartite.viewer mydata.db
+echo     python -m src.viewer mydata.db
 echo.
 echo Documentation:
 echo  • README.md - Project overview
