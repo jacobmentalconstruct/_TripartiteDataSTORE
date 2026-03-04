@@ -16,8 +16,16 @@ if TYPE_CHECKING:
 
 
 def open_db(path: str, check_same_thread: bool = False) -> sqlite3.Connection:
-    """Open an SQLite connection to a Tripartite database."""
+    """Open an SQLite connection to a Tripartite database.
+
+    Ensures foreign key enforcement and other pragmas are active.
+    Note: For new database creation, use schema.py::open_db() instead.
+    """
     conn = sqlite3.connect(path, check_same_thread=check_same_thread)
+
+    # Ensure foreign key enforcement is enabled
+    conn.execute("PRAGMA foreign_keys = ON")
+
     return conn
 
 

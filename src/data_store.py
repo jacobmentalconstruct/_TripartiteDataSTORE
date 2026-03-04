@@ -102,7 +102,7 @@ def discover_tools(extra_dirs: list[Path] | None = None) -> list[type]:
     # Built-in curate_tools/ package
     builtin_dir = Path(__file__).parent / "curate_tools"
     if builtin_dir.is_dir():
-        search_dirs.append(("tripartite.curate_tools", builtin_dir))
+        search_dirs.append(("src.curate_tools", builtin_dir))
 
     for extra in (extra_dirs or []):
         if isinstance(extra, str):

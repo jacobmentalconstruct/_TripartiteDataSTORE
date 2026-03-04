@@ -13,10 +13,59 @@ Layer mapping:
 
 v0.2.0 — Added language-tier columns to chunk_manifest and tree_nodes:
   semantic_depth, structural_depth, language_tier
+
+v0.3.0 — Added manifest contract layer:
+  cartridge_manifest (single-row metadata)
+  Enhanced ingest_runs with stage tracking
 """
 
 import sqlite3
 from pathlib import Path
+import json
+
+
+# ── Manifest Enums ──────────────────────────────────────────────────────────
+
+# Embedding status values in chunk_manifest
+EMBED_STATUS_ENUM = {
+    "pending": 0,      # Not yet embedded
+    "done": 1,         # Successfully embedded
+    "stale": 2,        # Was embedded, but source changed
+    "error": 3,        # Embedding failed
+}
+
+# Graph status values in chunk_manifest
+GRAPH_STATUS_ENUM = {
+    "pending": 0,           # Awaiting graph extraction
+    "structural": 1,        # Only structural nodes created (some chunks)
+    "done": 2,              # Full graph extraction complete
+    "error": 3,             # Graph extraction failed
+}
+
+# Ingest run status
+INGEST_STATUS_ENUM = {
+    "running": 0,
+    "success": 1,
+    "failed": 2,
+    "partial": 3,
+}
+
+# Deployment rules for Airlock validation
+DEPLOYMENT_RULES = {
+    "embeddings_required": True,         # All chunks must be embedded
+    "graph_required": "structural",      # Graph must be at least "structural"
+    "all_tables_required": [
+        "source_files",
+        "tree_nodes",
+        "chunk_manifest",
+        "embeddings",
+        "graph_nodes",
+        "graph_edges",
+        "cartridge_manifest",
+        "ingest_runs",
+    ],
+    "last_run_status_required": "success",  # Last ingest_runs.status must be 'success'
+}
 
 
 # ── DDL ────────────────────────────────────────────────────────────────────────
@@ -27,6 +76,7 @@ PRAGMA foreign_keys = ON;
 PRAGMA synchronous = NORMAL;
 PRAGMA mmap_size = 30000000000;
 PRAGMA temp_store = MEMORY;
+PRAGMA user_version = 1;
 
 -- ── Layer 1: Verbatim ──────────────────────────────────────────────────────
 
@@ -203,19 +253,111 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
     tokenize = 'porter unicode61'
 );
 
--- ── Ingest run log ─────────────────────────────────────────────────────────
+-- ── Ingest run log (Enhanced v0.3.0) ───────────────────────────────────────
 
+-- Detailed run tracking with stage-by-stage progress for resumability and audit.
 CREATE TABLE IF NOT EXISTS ingest_runs (
     run_id          TEXT PRIMARY KEY,
     started_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     completed_at    TEXT,
+
+    -- Source Context
     source_root     TEXT NOT NULL,
-    files_processed INTEGER NOT NULL DEFAULT 0,
+
+    -- File-Level Counts (detailed)
+    files_discovered INTEGER NOT NULL DEFAULT 0,    -- Files found (pre-filtering)
+    files_processed INTEGER NOT NULL DEFAULT 0,     -- Files successfully ingested
+    files_skipped   INTEGER NOT NULL DEFAULT 0,     -- Files skipped (binary, etc.)
+
+    -- Pipeline artifact counts
     chunks_created  INTEGER NOT NULL DEFAULT 0,
     chunks_embedded INTEGER NOT NULL DEFAULT 0,
-    status          TEXT NOT NULL DEFAULT 'running',  -- running | done | failed
-    error           TEXT
+    graph_nodes_created INTEGER NOT NULL DEFAULT 0,
+    graph_edges_created INTEGER NOT NULL DEFAULT 0,
+
+    -- Pipeline Configuration Snapshot (captured at ingest time)
+    pipeline_ver    TEXT,
+    embed_model     TEXT,
+    embed_dims      INTEGER,
+    git_commit      TEXT,
+
+    -- Status & Error Tracking
+    status          TEXT NOT NULL DEFAULT 'running',  -- running | success | failed | partial
+    error           TEXT,                              -- Error message if status != success
+    error_count     INTEGER DEFAULT 0,                 -- Count of errors encountered
+
+    -- Stage Progress (for resumability and validation)
+    stage_detect_complete BOOLEAN DEFAULT 0,           -- Stage 1: Detect & normalize
+    stage_structural_complete BOOLEAN DEFAULT 0,       -- Stage 2-3: Parse & chunk
+    stage_verbatim_complete BOOLEAN DEFAULT 0,         -- Stage 4: Write verbatim layer
+    stage_embed_complete BOOLEAN DEFAULT 0,            -- Stage 7: Embeddings
+    stage_graph_complete BOOLEAN DEFAULT 0,            -- Stage 8: Graph extraction
+    stage_manifest_complete BOOLEAN DEFAULT 0,         -- Stage 9: Manifest finalization
+
+    -- Performance Metrics
+    duration_seconds REAL,                             -- Total runtime
+    embedding_rate REAL,                               -- Chunks per second (for graphs)
+
+    -- Metadata
+    metadata_json   TEXT                               -- Free-form JSON for extensibility
 );
+
+-- ── Cartridge Manifest (Single-Row Metadata) ────────────────────────────────
+
+-- Central metadata hub for the cartridge. Must contain exactly one row.
+-- Enables orchestrators (like Node Walker Airlock) to validate and assess
+-- the cartridge without scanning the entire database.
+CREATE TABLE IF NOT EXISTS cartridge_manifest (
+    cartridge_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    title TEXT,
+    description TEXT,
+
+    -- Schema & Pipeline Versioning
+    schema_ver INTEGER NOT NULL DEFAULT 1,             -- Schema version (e.g., 1)
+    pipeline_ver TEXT NOT NULL,                        -- Pipeline version (e.g., "0.1.0")
+
+    -- Source Configuration
+    source_root TEXT NOT NULL,                         -- Primary ingestion root
+    source_roots_json TEXT,                            -- JSON array of all roots (multi-source)
+
+    -- Embedding Configuration (global defaults)
+    embed_model TEXT NOT NULL,                         -- e.g., "nomic-embed-text-v1.5.Q4_K_M.gguf"
+    embed_dims INTEGER NOT NULL,                       -- e.g., 768
+
+    -- Node Type Registry (Optional)
+    node_types_registry_ver TEXT,                      -- e.g., "1.0"
+
+    -- Layer Completion State
+    structural_complete BOOLEAN DEFAULT 0,             -- Are all tree_nodes complete?
+    semantic_complete BOOLEAN DEFAULT 0,               -- Are embeddings complete?
+    graph_complete BOOLEAN DEFAULT 0,                  -- Are graph layers complete?
+    search_index_complete BOOLEAN DEFAULT 0,           -- Are FTS indices built?
+
+    -- Deployment Readiness
+    is_deployable BOOLEAN DEFAULT 0,                   -- Can Airlock deploy this?
+    deployment_notes TEXT,                             -- Why it is/isn't deployable
+
+    -- Integrity Checksums (from last successful ingest)
+    file_count INTEGER,                                -- Total files ingested
+    tree_node_count INTEGER,                           -- Total tree nodes
+    chunk_count INTEGER,                               -- Total chunks
+    embedding_count INTEGER,                           -- Embedded chunks
+    graph_node_count INTEGER,                          -- Graph nodes
+    graph_edge_count INTEGER,                          -- Graph edges
+
+    -- Source Code Version
+    git_commit TEXT,                                   -- Ingestion source code version
+    git_tag TEXT,
+
+    -- Extensibility
+    metadata_json TEXT                                 -- Free-form JSON
+);
+
+-- Ensure only one row can exist
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cartridge_manifest_singleton
+ON cartridge_manifest(0);
 """
 
 
@@ -230,11 +372,16 @@ def open_db(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
+
+    # Apply schema (which includes PRAGMA user_version = 1 for v0.3.0)
     conn.executescript(SCHEMA_SQL)
     conn.commit()
 
     # Run migrations for existing databases that predate v0.2.0
     _migrate_v020_tier_columns(conn)
+
+    # Initialize cartridge_manifest if it doesn't exist
+    _initialize_cartridge_manifest(conn)
 
     return conn
 
@@ -377,4 +524,38 @@ def _migrate_v020_tier_columns(conn: sqlite3.Connection) -> None:
         except sqlite3.OperationalError:
             pass  # Indexes already exist
 
+        conn.commit()
+
+
+def _initialize_cartridge_manifest(conn: sqlite3.Connection) -> None:
+    """
+    Initialize cartridge_manifest table with a single row if it doesn't exist.
+
+    This is called on every database open and is idempotent.
+    If a row exists, it's left untouched (for resumability).
+    """
+    # Check if cartridge_manifest already has a row
+    count = conn.execute("SELECT COUNT(*) FROM cartridge_manifest").fetchone()[0]
+
+    if count == 0:
+        # Initialize with defaults
+        import uuid
+        cartridge_id = str(uuid.uuid4())
+
+        # Get default values - these will be updated by ingest pipeline
+        pipeline_ver = "0.1.0"  # Will be updated during ingest
+        embed_model = "nomic-embed-text-v1.5.Q4_K_M.gguf"  # Default
+        embed_dims = 768
+        source_root = ""  # Will be set at first ingest
+
+        conn.execute(
+            """
+            INSERT INTO cartridge_manifest (
+                cartridge_id, pipeline_ver, embed_model, embed_dims, source_root,
+                schema_ver, structural_complete, semantic_complete,
+                graph_complete, search_index_complete, is_deployable
+            ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0)
+            """,
+            (cartridge_id, pipeline_ver, embed_model, embed_dims, source_root, 1)
+        )
         conn.commit()
