@@ -142,3 +142,7 @@ site/
 # DO commit example/test files if needed:
 !tests/
 !tests/**
+
+# Code Claude
+.claude/
+claude/

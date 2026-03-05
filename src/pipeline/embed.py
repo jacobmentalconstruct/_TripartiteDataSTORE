@@ -44,6 +44,8 @@ def embed_chunks(
     node_ids: list[str],
     lazy: bool = False,
     on_progress=None,
+    timeout_seconds: Optional[int] = None,
+    started_time: Optional[float] = None,
 ) -> None:
     """
     Embed all chunks and write results to the embeddings table.
@@ -53,7 +55,10 @@ def embed_chunks(
 
     on_progress: optional callable(event: dict) — fired per chunk with:
         {"type": "embedding_progress", "chunk_idx": i, "chunk_total": n, "filename": str}
+    timeout_seconds: Optional timeout for embedding stage
+    started_time: Time when ingest operation started (for timeout calculation)
     """
+    import time as time_module
     if lazy:
         _mark_all_pending(conn, chunk_ids)
         return
@@ -84,6 +89,14 @@ def embed_chunks(
 
         for i, (chunk, chunk_id) in enumerate(zip(batch_chunks, batch_ids)):
             global_idx = batch_start + i
+
+            # Check timeout before embedding each chunk
+            if timeout_seconds is not None and started_time is not None:
+                elapsed = time_module.time() - started_time
+                if elapsed > timeout_seconds:
+                    print(f"[embed] TIMEOUT: {elapsed:.1f}s > {timeout_seconds}s limit, skipping remaining {total - global_idx} chunks")
+                    _mark_remaining_pending(conn, chunk_ids[global_idx:])
+                    return
 
             if on_progress is not None:
                 try:
@@ -161,6 +174,17 @@ def _mark_all_pending(conn: sqlite3.Connection, chunk_ids: list[str]) -> None:
             "UPDATE chunk_manifest SET embed_status = 'pending' WHERE chunk_id = ?",
             (cid,),
         )
+
+
+def _mark_remaining_pending(conn: sqlite3.Connection, chunk_ids: list[str]) -> None:
+    """Mark remaining chunks as pending due to timeout."""
+    if chunk_ids:
+        placeholders = ",".join("?" * len(chunk_ids))
+        conn.execute(
+            f"UPDATE chunk_manifest SET embed_status = 'pending' WHERE chunk_id IN ({placeholders})",
+            chunk_ids,
+        )
+        conn.commit()
 
 
 # ── Cosine similarity helper (for future near-duplicate linking) ───────────────

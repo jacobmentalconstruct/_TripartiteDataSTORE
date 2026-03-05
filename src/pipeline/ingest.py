@@ -125,6 +125,8 @@ def _ingest_file(
     lazy: bool = False,
     verbose: bool = False,
     very_verbose: bool = False,
+    timeout_seconds: Optional[int] = None,
+    started_time: Optional[float] = None,
     on_chunk=None,
     on_progress=None,
 ) -> tuple[int, int]:
@@ -134,6 +136,8 @@ def _ingest_file(
 
     on_chunk:    optional callable(source, chunk, chunk_id, index, total)
     on_progress: optional callable(event: dict) for status bar updates
+    timeout_seconds: Optional timeout for entire operation
+    started_time: Time when ingest started (for timeout calculation)
     """
     if verbose:
         print(f"  [{source.source_type}] {source.path.name}", flush=True)
@@ -186,7 +190,10 @@ def _ingest_file(
     write_manifest(conn, chunks, chunk_ids, node_ids, chunker_name)
 
     # ── Stage 7: Embed ────────────────────────────────────────────────────
-    embed_chunks(conn, chunks, chunk_ids, node_ids, lazy=lazy, on_progress=on_progress)
+    embed_chunks(
+        conn, chunks, chunk_ids, node_ids, lazy=lazy, on_progress=on_progress,
+        timeout_seconds=timeout_seconds, started_time=started_time
+    )
 
     # ── Stage 8: Entity extraction + graph ───────────────────────────────
     # v0.3.1: Pass on_progress so extraction fires progress events and
@@ -220,6 +227,7 @@ def ingest(
     lazy: bool = False,
     verbose: bool = True,
     very_verbose: bool = False,
+    timeout_seconds: Optional[int] = None,
     on_chunk=None,
     on_progress=None,
 ) -> dict:
@@ -232,6 +240,7 @@ def ingest(
         lazy: Skip embedding (for testing)
         verbose: Show high-level progress (file count, totals)
         very_verbose: Show detailed per-stage timing and progress
+        timeout_seconds: Optional timeout in seconds for overall ingest operation
         on_chunk: optional callable(source, chunk, chunk_id, index, total)
         on_progress: optional callable(event: dict) fired at key pipeline moments.
           Event types:
@@ -331,8 +340,26 @@ def ingest(
 
     # Start overall processing timer
     _stage_timing("processing", "start")
+    timeout_exceeded = False
 
     for idx, path in enumerate(candidate_paths, 1):
+        # Check timeout every iteration
+        if timeout_seconds is not None:
+            elapsed = time.time() - started
+            if elapsed > timeout_seconds and not timeout_exceeded:
+                timeout_exceeded = True
+                err = f"TIMEOUT: Ingest exceeded {timeout_seconds}s limit (elapsed: {elapsed:.1f}s)"
+                errors.append(err)
+                if verbose:
+                    print(f"[ingest] ⚠ {err}")
+                # Continue to allow final summary to be written
+            elif timeout_exceeded:
+                # Skip remaining files to avoid running over time
+                if verbose:
+                    print(f"[{idx}/{total}] {path.name} (skipped - timeout exceeded)")
+                files_skipped += 1
+                _progress({"type": "file_done", "file_idx": idx, "file_total": total})
+                continue
         # Show subdirectory changes for visibility into traversal
         path_dir = path.parent
         if path_dir != current_dir and verbose:
@@ -361,6 +388,7 @@ def ingest(
             with conn:
                 fc, fe = _ingest_file(
                     conn, source, lazy=lazy, verbose=verbose, very_verbose=very_verbose,
+                    timeout_seconds=timeout_seconds, started_time=started,
                     on_chunk=on_chunk, on_progress=on_progress,
                 )
                 files_processed += 1
@@ -487,6 +515,8 @@ def ingest(
         "callback_errors": callback_errors,
         "elapsed_seconds": round(elapsed, 2),
         "stage_timings": stage_timings,
+        "timeout_exceeded": timeout_exceeded,
+        "timeout_seconds": timeout_seconds,
     }
 
     if verbose:
@@ -517,6 +547,12 @@ def _print_summary(s: dict) -> None:
         print("\n  Stage Timings:")
         for stage, elapsed in sorted(s["stage_timings"].items()):
             print(f"    {stage:15} : {elapsed:8.3f}s")
+
+    # Show timeout info if applicable
+    if s.get("timeout_exceeded"):
+        timeout_val = s.get("timeout_seconds", "N/A")
+        print(f"\n  ⏱ TIMEOUT: Operation exceeded {timeout_val}s limit")
+        print(f"     {s['files_skipped']} files and {s['chunks_created'] - s['chunks_embedded']} chunks were skipped")
 
     if s["errors"]:
         print(f"\n  ⚠ {len(s['errors'])} ingestion error(s):")
